@@ -173,3 +173,24 @@ Thumbs.db
 
 # Docker
 postgres_data/
+
+# Project-specific local env files
+/backend/.env
+/frontend/.env
+
+# Angular build and local cache
+/frontend/dist/
+/frontend/node_modules/
+/frontend/.angular/
+
+# Python local artifacts
+/backend/__pycache__/
+/backend/.pytest_cache/
+
+# Local database or backup files
+*.sqlite3
+*.db
+*.bak
+
+# Optional local Docker overrides
+docker-compose.override.yml

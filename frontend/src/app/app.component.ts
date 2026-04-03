@@ -1,30 +1,34 @@
-import { Component, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
+import { Component, inject } from '@angular/core';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { filter, map, startWith } from 'rxjs';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })
 export class AppComponent {
-  private readonly http = inject(HttpClient);
+  private readonly router = inject(Router);
 
-  apiStatus = 'Checking backend...';
+  readonly navigation = [
+    { label: 'Inicio', path: '/' },
+    { label: 'Suscripciones', path: '/suscripciones' },
+    { label: 'Planes', path: '/planes' },
+    { label: 'Servicios', path: '/servicios' },
+    { label: 'Mapa', path: '/mapa' },
+    { label: 'Contacto', path: '/contacto' },
+  ];
 
-  constructor() {
-    this.http
-      .get<{ status: string; database: string }>('http://localhost:8000/api/health')
-      .subscribe({
-        next: (response) => {
-          this.apiStatus = `API ${response.status} | DB ${response.database}`;
-        },
-        error: () => {
-          this.apiStatus = 'Backend not available yet';
-        },
-      });
-  }
+  readonly isAuthRoute$ = this.router.events.pipe(
+    filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+    map(
+      (event) =>
+        event.urlAfterRedirects.startsWith('/login') ||
+        event.urlAfterRedirects.startsWith('/dashboard'),
+    ),
+    startWith(this.router.url.startsWith('/login') || this.router.url.startsWith('/dashboard')),
+  );
 }
-
