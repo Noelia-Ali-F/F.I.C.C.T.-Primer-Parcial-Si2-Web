@@ -1,12 +1,15 @@
 import { CommonModule } from '@angular/common';
-import { Component } from '@angular/core';
-import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { Component, inject } from '@angular/core';
+import { FormsModule, NgForm } from '@angular/forms';
+import { Router, RouterLink } from '@angular/router';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+
+import { ValidationDialogComponent } from './validation-dialog.component';
 
 @Component({
   selector: 'app-login-page',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, MatDialogModule, RouterLink],
   template: `
     <main class="page login-clean-page">
       <section class="login-clean-shell">
@@ -35,35 +38,50 @@ import { RouterLink } from '@angular/router';
 
             <h1>Inicio de Sesión</h1>
 
-            <form class="login-clean-form">
+            <form class="login-clean-form" (ngSubmit)="submitLogin(loginForm)" #loginForm="ngForm">
               <label class="form-field">
                 <span>Correo electrónico</span>
                 <input
                   type="email"
                   name="email"
                   [(ngModel)]="form.email"
+                  required
+                  email
                   placeholder="ejemplo@talleracb.com"
                 />
               </label>
 
               <label class="form-field">
                 <span>Contraseña</span>
-                <input
-                  type="password"
-                  name="password"
-                  [(ngModel)]="form.password"
-                  placeholder="Ingresa tu contraseña"
-                />
+                <span class="password-field">
+                  <input
+                    [type]="showPassword ? 'text' : 'password'"
+                    name="password"
+                    [(ngModel)]="form.password"
+                    required
+                    placeholder="Ingresa tu contraseña"
+                  />
+                  <button
+                    class="password-toggle"
+                    type="button"
+                    (click)="showPassword = !showPassword"
+                    [attr.aria-label]="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                  >
+                    {{ showPassword ? '🙈' : '👁' }}
+                  </button>
+                </span>
               </label>
 
-              <a class="button primary login-clean-submit" routerLink="/dashboard">Ingresar</a>
+              <p class="login-clean-feedback" *ngIf="submitMessage">{{ submitMessage }}</p>
+
+              <button class="button primary login-clean-submit" type="submit">Ingresar</button>
 
               <label class="login-clean-option is-checked">
                 <input type="checkbox" name="remember" [(ngModel)]="form.remember" />
                 <span>Mantener sesión iniciada</span>
               </label>
 
-              <a class="login-clean-option" routerLink="/contacto">¿Olvidaste tu contraseña?</a>
+              <a class="login-clean-option" routerLink="/forgot-password">¿Olvidaste tu contraseña?</a>
             </form>
           </article>
         </div>
@@ -73,11 +91,56 @@ import { RouterLink } from '@angular/router';
   styleUrl: './shared-pages.css',
 })
 export class LoginPageComponent {
+  private readonly emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  private readonly dialog = inject(MatDialog);
+  private readonly router = inject(Router);
+
   selectedRole: 'socio' | 'admin' = 'socio';
+  showPassword = false;
+  submitMessage = '';
 
   form = {
     email: '',
     password: '',
     remember: true,
   };
+
+  submitLogin(loginForm: NgForm): void {
+    const missingFields = this.getMissingFields();
+
+    if (missingFields.length > 0 || loginForm.invalid) {
+      this.submitMessage = 'Completa el formulario para continuar.';
+      this.openValidationDialog(missingFields);
+      return;
+    }
+
+    this.submitMessage = '';
+    void this.router.navigate(['/dashboard']);
+  }
+
+  private getMissingFields(): string[] {
+    const missingFields: string[] = [];
+
+    const email = this.form.email.trim();
+
+    if (!email) {
+      missingFields.push('Correo Electrónico');
+    } else if (!this.emailPattern.test(email)) {
+      missingFields.push('Correo Electrónico válido');
+    }
+
+    if (!this.form.password.trim()) {
+      missingFields.push('Contraseña');
+    }
+
+    return missingFields;
+  }
+
+  private openValidationDialog(missingFields: string[]): void {
+    this.dialog.open(ValidationDialogComponent, {
+      width: '26rem',
+      maxWidth: 'calc(100vw - 2rem)',
+      data: { missingFields },
+    });
+  }
 }

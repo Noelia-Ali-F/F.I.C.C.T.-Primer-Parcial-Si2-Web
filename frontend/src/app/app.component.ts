@@ -26,8 +26,13 @@ export class AppComponent {
     map(
       (event) =>
         event.urlAfterRedirects.startsWith('/login') ||
+        event.urlAfterRedirects.startsWith('/forgot-password') ||
         event.urlAfterRedirects.startsWith('/dashboard'),
     ),
-    startWith(this.router.url.startsWith('/login') || this.router.url.startsWith('/dashboard')),
+    startWith(
+      this.router.url.startsWith('/login') ||
+        this.router.url.startsWith('/forgot-password') ||
+        this.router.url.startsWith('/dashboard'),
+    ),
   );
 }

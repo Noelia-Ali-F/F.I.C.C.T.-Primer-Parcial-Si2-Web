@@ -7,6 +7,7 @@ Estructura base del proyecto web para el primer parcial de SI2.
 - `frontend`: aplicacion Angular para desarrollo web
 - `backend`: API FastAPI y configuracion de acceso a PostgreSQL
 - `docker-compose.yml`: entorno de desarrollo con frontend, backend y base de datos
+- `backend/API.md`: documentacion de endpoints del backend
 
 ## Desarrollo con Docker
 

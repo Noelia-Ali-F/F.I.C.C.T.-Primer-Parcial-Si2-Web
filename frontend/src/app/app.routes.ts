@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 
 import { DashboardPageComponent } from './pages/dashboard-page.component';
+import { ForgotPasswordPageComponent } from './pages/forgot-password-page.component';
 import { HomePageComponent } from './pages/home-page.component';
 import { LoginPageComponent } from './pages/login-page.component';
 import { MapPageComponent } from './pages/map-page.component';
@@ -49,6 +50,11 @@ export const appRoutes: Routes = [
     path: 'login',
     component: LoginPageComponent,
     title: 'Iniciar sesión | Taller ACB Asistencia',
+  },
+  {
+    path: 'forgot-password',
+    component: ForgotPasswordPageComponent,
+    title: 'Recuperar contraseña | Taller ACB Asistencia',
   },
   {
     path: 'dashboard',
