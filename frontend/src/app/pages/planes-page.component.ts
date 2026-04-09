@@ -4,10 +4,12 @@ import { RouterLink } from '@angular/router';
 
 type PlanCard = {
   name: string;
-  tagline: string;
-  target: string;
+  subtitle?: string;
+  description: string;
   benefits: string[];
-  highlight?: string;
+  badge?: string;
+  cta: string;
+  theme?: 'highlight' | 'dark';
 };
 
 @Component({
@@ -16,90 +18,44 @@ type PlanCard = {
   imports: [CommonModule, RouterLink],
   template: `
     <main class="page">
-      <section class="section-hero plans-hero">
-        <div>
-          <p class="eyebrow">Planes</p>
-          <h1>Planes de afiliación para talleres socios</h1>
-          <p class="lead">
-            Esta vista está pensada para mostrar con claridad qué obtiene un taller al asociarse al
-            proyecto y cómo puede crecer dentro de la red de asistencia.
-          </p>
-        </div>
+      <section class="section plans-showcase">
+        <div class="plans-showcase-top">
+          <div class="plans-showcase-copy">
+            <h2>Planes para talleres asociados</h2>
+            <p>
+              Elige como quieres crecer dentro de la red de asistencia vehicular.
+            </p>
+            <p>Mas visibilidad, mas solicitudes, mas ingresos.</p>
+          </div>
 
-        <div class="plans-hero-card">
-          <span>Contexto recomendado</span>
-          <strong>La promesa no debe ser solo “ser socio”, sino recibir más trabajo y más visibilidad.</strong>
-          <p>Los talleres entienden mejor la propuesta cuando se habla de beneficios operativos reales.</p>
-        </div>
-      </section>
-
-      <section class="spotlight compact">
-        <div>
-          <h2>Qué debería comunicar esta vista</h2>
-          <p>
-            Los planes deben explicar acceso a clientes, prioridad en derivaciones, presencia dentro
-            de la plataforma, soporte comercial y pertenencia a una red confiable.
-          </p>
-        </div>
-
-        <div class="quote-card">
-          <p>
-            “Un buen plan no vende solo membresía: vende flujo de trabajo, confianza y oportunidad de
-            crecimiento para el taller.”
-          </p>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="section-head">
-          <p class="eyebrow">Propuesta Base</p>
-          <h2>Ideas de planes para talleres asociados</h2>
+          <article class="plans-promo-card">
+            <div class="plans-promo-check">✓</div>
+            <div>
+              <h3>No pagas por estar... Ganas por trabajar.</h3>
+              <p>La plataforma te conecta con clientes reales que necesitan ayuda ahora.</p>
+            </div>
+          </article>
         </div>
 
         <div class="plans-grid">
-          <article class="plan-card" *ngFor="let plan of plans" [class.plan-highlight]="plan.highlight">
-            <span class="plan-badge" *ngIf="plan.highlight">{{ plan.highlight }}</span>
+          <article
+            class="plan-card showcase-plan-card"
+            *ngFor="let plan of plans"
+            [class.plan-highlight]="plan.theme === 'highlight'"
+            [class.plan-dark]="plan.theme === 'dark'"
+          >
+            <span class="plan-badge" *ngIf="plan.badge">{{ plan.badge }}</span>
             <h3>{{ plan.name }}</h3>
-            <p class="plan-tagline">{{ plan.tagline }}</p>
-            <p class="plan-target">{{ plan.target }}</p>
+            <p class="plan-tagline" *ngIf="plan.subtitle">{{ plan.subtitle }}</p>
+            <p class="plan-target" *ngIf="plan.description">{{ plan.description }}</p>
 
             <ul class="plan-benefits">
               <li *ngFor="let benefit of plan.benefits">{{ benefit }}</li>
             </ul>
 
-            <a class="button primary" routerLink="/suscripciones">Solicitar este plan</a>
+            <a class="button primary plan-cta" routerLink="/contacto">{{ plan.cta }}</a>
           </article>
         </div>
-      </section>
-
-      <section class="plans-layout">
-        <article class="quote-preview">
-          <span class="quote-chip">Ideas de contenido</span>
-          <h4>Mensajes que ayudan a vender mejor los planes</h4>
-          <p>
-            “Más visibilidad para tu taller”, “más oportunidades de servicio”, “prioridad en
-            asignación”, “presencia en mapa y red de asistencia”, y “respaldo de una plataforma
-            confiable”.
-          </p>
-        </article>
-
-        <article class="map-stat">
-          <span>Sugerencia comercial</span>
-          <strong>No compitas solo por precio</strong>
-          <p>
-            Diferencia los planes por nivel de exposición, prioridad, soporte y beneficios
-            operativos, no solo por una tarifa de membresía.
-          </p>
-        </article>
-
-        <article class="map-stat">
-          <span>Siguiente paso</span>
-          <strong>Definir precios y condiciones</strong>
-          <p>
-            Cuando quieras, te ayudo a convertir estos planes en una tabla final con precios,
-            comisiones y reglas de afiliación.
-          </p>
-        </article>
       </section>
     </main>
   `,
@@ -109,37 +65,45 @@ export class PlanesPageComponent {
   readonly plans: PlanCard[] = [
     {
       name: 'Plan Base',
-      tagline: 'Ingreso simple a la red de talleres socios.',
-      target: 'Ideal para talleres pequeños que quieren empezar a recibir visibilidad y contactos.',
+      badge: 'Gratis',
+      description: 'Empieza sin costo y recibe tus primeras solicitudes.',
       benefits: [
         'Perfil dentro de la plataforma',
-        'Presencia básica en directorio',
-        'Recepción de consultas y derivaciones',
-        'Acceso inicial a la red de talleres asociados',
+        'Visibilidad limitada: hasta 4 solicitudes por dia',
+        'Recepcion de consultas basicas',
+        'Participacion en la red de talleres',
+        'Comision por servicio: 10%',
       ],
+      cta: 'Empezar gratis',
     },
     {
       name: 'Plan Profesional',
-      tagline: 'Mayor exposición y prioridad en asignaciones.',
-      target: 'Pensado para talleres con más capacidad operativa y atención más constante.',
+      badge: 'Recomendado',
+      description: 'Aumenta tu visibilidad y recibe mas trabajos.',
       benefits: [
-        'Mayor prioridad frente al plan base',
-        'Mejor posicionamiento dentro de la plataforma',
-        'Recepción preferente de solicitudes',
-        'Destacado comercial dentro de campañas y secciones clave',
+        'Mayor prioridad en asignaciones',
+        'Mas visibilidad dentro de la plataforma',
+        'Mas solicitudes por dia',
+        'Posicionamiento destacado',
+        'Comision reducida',
       ],
-      highlight: 'Recomendado',
+      cta: 'Quiero este plan',
+      theme: 'highlight',
     },
     {
       name: 'Plan Aliado 24/7',
-      tagline: 'Para talleres y operadores con respuesta rápida o cobertura ampliada.',
-      target: 'Enfocado en talleres con capacidad de urgencias, auxilio móvil o atención extendida.',
+      subtitle: 'Para talleres con atencion continua y mayor capacidad operativa.',
+      description: '',
       benefits: [
-        'Etiqueta de atención prioritaria',
-        'Mayor visibilidad en urgencias o auxilio',
-        'Posibilidad de operar en horarios extendidos',
-        'Participación en la red de asistencia inmediata',
+        'Atencion prioritaria en emergencias',
+        'Participacion en servicios urgentes',
+        'Operacion 24/7',
+        'Maxima visibilidad',
+        'Acceso inmediato a solicitudes criticas',
+        'Comision aun menor',
       ],
+      cta: 'Unirme como aliado',
+      theme: 'dark',
     },
   ];
 }

@@ -120,25 +120,10 @@ export const sectionContent: Record<string, SectionContent> = {
   contacto: {
     eyebrow: 'Contacto',
     title: 'Atención clara y accesible',
-    intro:
-      'La web original usa mucho WhatsApp y contacto directo. Aquí mantenemos ese espíritu con un diseño más ordenado, priorizando vías de contacto y llamados a la acción.',
-    lead:
-      'Esta vista funciona bien como cierre de navegación y como punto de entrada para usuarios que ya vienen con intención concreta.',
-    highlight: 'Un buen contacto no solo informa: tranquiliza y convierte.',
-    cards: [
-      {
-        title: 'Atención telefónica',
-        description: '2791727 para información institucional y orientación general.',
-      },
-      {
-        title: 'Auxilio mecánico',
-        description: '800163316 como canal rápido para asistencia.',
-      },
-      {
-        title: 'Correo',
-        description: 'marketing@acbbolivia.com.bo para consultas y coordinación institucional.',
-      },
-    ],
-    cta: 'Hablar con un asesor',
+    intro: 'Estamos aqui para ayudarte. Contactanos de forma rapida y sencilla.',
+    lead: 'Informacion de contacto disponible 24/7.',
+    highlight: 'Respuesta clara, directa y confiable.',
+    cards: [],
+    cta: 'Contactanos ahora',
   },
 };

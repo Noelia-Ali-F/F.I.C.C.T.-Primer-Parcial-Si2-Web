@@ -31,7 +31,6 @@ type DashboardItem = {
 
         <nav class="dashboard-menu">
           <a class="is-active" routerLink="/dashboard">Resumen</a>
-          <a routerLink="/suscripciones">Suscripciones</a>
           <a routerLink="/planes">Planes</a>
           <a routerLink="/servicios">Servicios</a>
           <a routerLink="/contacto">Contacto</a>
@@ -85,7 +84,7 @@ type DashboardItem = {
           <article class="dashboard-panel">
             <div class="dashboard-panel-head">
               <h2>Talleres socios</h2>
-              <a routerLink="/suscripciones">Gestionar</a>
+              <a routerLink="/planes">Gestionar</a>
             </div>
 
             <div class="dashboard-list">

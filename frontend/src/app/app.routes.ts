@@ -8,7 +8,6 @@ import { NotFoundPageComponent } from './pages/not-found-page.component';
 import { PlanesPageComponent } from './pages/planes-page.component';
 import { SectionPageComponent } from './pages/section-page.component';
 import { ServiciosPageComponent } from './pages/servicios-page.component';
-import { SuscripcionesPageComponent } from './pages/suscripciones-page.component';
 
 export const appRoutes: Routes = [
   {
@@ -18,12 +17,12 @@ export const appRoutes: Routes = [
   },
   {
     path: 'suscripciones',
-    component: SuscripcionesPageComponent,
-    title: 'Suscripciones | Talleres Socios',
+    redirectTo: 'planes',
+    pathMatch: 'full',
   },
   {
     path: 'nosotros',
-    redirectTo: 'suscripciones',
+    redirectTo: 'planes',
     pathMatch: 'full',
   },
   {

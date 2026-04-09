@@ -8,61 +8,76 @@ import { RouterLink } from '@angular/router';
   standalone: true,
   imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <main class="page">
-      <section class="login-layout single-login">
-        <article class="login-panel">
-          <p class="eyebrow">Acceso</p>
-          <h1>Iniciar sesión</h1>
-          <p class="lead">
-            Accede a la plataforma para gestionar solicitudes, talleres asociados y servicios de
-            auxilio dentro de la red.
-          </p>
+    <main class="page login-clean-page">
+      <section class="login-clean-shell">
+        <div class="login-clean-card">
+          <div class="login-clean-art">
+            <img src="/hero-grua-scene.svg" alt="Escena ilustrada del taller" />
+          </div>
 
-          <form class="login-form">
-            <label class="form-field">
-              <span>Correo electrónico</span>
-              <input
-                type="email"
-                name="email"
-                [(ngModel)]="form.email"
-                placeholder="correo@ejemplo.com"
-              />
-            </label>
+          <article class="login-clean-form-card">
+            <div class="login-clean-tabs">
+              <button
+                type="button"
+                [class.is-active]="selectedRole === 'socio'"
+                (click)="selectedRole = 'socio'"
+              >
+                Socio del Taller
+              </button>
+              <button
+                type="button"
+                [class.is-active]="selectedRole === 'admin'"
+                (click)="selectedRole = 'admin'"
+              >
+                Administrador
+              </button>
+            </div>
 
-            <label class="form-field">
-              <span>Contraseña</span>
-              <input
-                type="password"
-                name="password"
-                [(ngModel)]="form.password"
-                placeholder="Ingresa tu contraseña"
-              />
-            </label>
+            <h1>Inicio de Sesión</h1>
 
-            <div class="login-actions">
-              <label class="remember-row">
-                <input type="checkbox" name="remember" [(ngModel)]="form.remember" />
-                <span>Recordarme</span>
+            <form class="login-clean-form">
+              <label class="form-field">
+                <span>Correo electrónico</span>
+                <input
+                  type="email"
+                  name="email"
+                  [(ngModel)]="form.email"
+                  placeholder="ejemplo@talleracb.com"
+                />
               </label>
 
-              <a routerLink="/contacto">¿Olvidaste tu contraseña?</a>
-            </div>
+              <label class="form-field">
+                <span>Contraseña</span>
+                <input
+                  type="password"
+                  name="password"
+                  [(ngModel)]="form.password"
+                  placeholder="Ingresa tu contraseña"
+                />
+              </label>
 
-            <div class="form-actions">
-              <a class="button secondary" routerLink="/suscripciones">Quiero asociarme</a>
-              <a class="button primary" routerLink="/dashboard">Ingresar</a>
-            </div>
-          </form>
-        </article>
+              <a class="button primary login-clean-submit" routerLink="/dashboard">Ingresar</a>
+
+              <label class="login-clean-option is-checked">
+                <input type="checkbox" name="remember" [(ngModel)]="form.remember" />
+                <span>Mantener sesión iniciada</span>
+              </label>
+
+              <a class="login-clean-option" routerLink="/contacto">¿Olvidaste tu contraseña?</a>
+            </form>
+          </article>
+        </div>
       </section>
     </main>
   `,
   styleUrl: './shared-pages.css',
 })
 export class LoginPageComponent {
+  selectedRole: 'socio' | 'admin' = 'socio';
+
   form = {
     email: '',
     password: '',
-    remember: false,
+    remember: true,
   };
 }

@@ -15,9 +15,8 @@ export class AppComponent {
 
   readonly navigation = [
     { label: 'Inicio', path: '/' },
-    { label: 'Suscripciones', path: '/suscripciones' },
-    { label: 'Planes', path: '/planes' },
     { label: 'Servicios', path: '/servicios' },
+    { label: 'Planes', path: '/planes' },
     { label: 'Mapa', path: '/mapa' },
     { label: 'Contacto', path: '/contacto' },
   ];
