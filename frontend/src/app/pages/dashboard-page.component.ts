@@ -4,10 +4,11 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 
-type DashboardSection = 'dashboard' | 'workshops' | 'technicians';
+type DashboardSection = 'dashboard' | 'workshops' | 'technicians' | 'clients';
 type TechnicianStatus = 'disponible' | 'ocupado' | 'fuera_de_servicio';
 type TechnicianFilter = 'activos' | 'todos' | 'historial';
 type WorkshopApprovalStatus = 'pendiente' | 'aprobada' | 'rechazada';
+type ClientStatus = 'active' | 'suspended';
 
 type DashboardStat = {
   label: string;
@@ -60,6 +61,29 @@ type TechnicianFormModel = {
   email: string;
   specialty: string;
   status: TechnicianStatus;
+};
+
+type Client = {
+  id: number;
+  identity_card: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  role: string;
+  status: ClientStatus;
+  accepted_terms: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type ClientFormModel = {
+  identity_card: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  role: string;
+  status: ClientStatus;
+  accepted_terms: boolean;
 };
 
 type WorkshopFormModel = {
@@ -153,10 +177,28 @@ type WorkshopFormModel = {
           </div>
 
           <div class="dashboard-menu-group">
-            <button class="dashboard-menu-link" type="button">
+            <button
+              class="dashboard-menu-link"
+              type="button"
+              [class.is-active]="selectedSection === 'clients'"
+              (click)="selectSection('clients')"
+            >
               <span class="dashboard-menu-icon">◉</span>
               <span>Clientes</span>
             </button>
+
+            <div class="dashboard-submenu">
+              <button
+                class="dashboard-submenu-item"
+                type="button"
+                [class.is-active]="selectedSection === 'clients'"
+                (click)="selectSection('clients')"
+              >
+                <span class="dashboard-submenu-bullet"></span>
+                <span>Lista de Clientes</span>
+                <strong>{{ clients.length | number: '2.0-0' }}</strong>
+              </button>
+            </div>
           </div>
 
           <div class="dashboard-menu-group">
@@ -208,15 +250,7 @@ type WorkshopFormModel = {
               ☰
             </button>
             <span class="dashboard-topbar-kicker">Panel interno</span>
-            <strong>
-              {{
-                selectedSection === 'dashboard'
-                  ? 'Resumen general'
-                  : selectedSection === 'technicians'
-                    ? 'Gestion de Tecnicos'
-                    : 'Gestion de Solicitudes'
-              }}
-            </strong>
+            <strong>{{ sectionTitle }}</strong>
           </div>
 
           <div class="dashboard-topbar-actions">
@@ -237,8 +271,8 @@ type WorkshopFormModel = {
 
         <section
           class="dashboard-stats"
-          *ngIf="selectedSection === 'dashboard' || selectedSection === 'technicians'"
-          [class.is-compact]="selectedSection === 'technicians'"
+          *ngIf="selectedSection === 'dashboard' || selectedSection === 'technicians' || selectedSection === 'clients'"
+          [class.is-compact]="selectedSection === 'technicians' || selectedSection === 'clients'"
         >
           <article class="dashboard-stat-card" *ngFor="let stat of stats" [attr.data-tone]="stat.tone">
             <div class="dashboard-stat-top">
@@ -577,6 +611,97 @@ type WorkshopFormModel = {
               </section>
             </div>
           </article>
+
+          <article class="dashboard-panel dashboard-panel-wide" *ngIf="selectedSection === 'clients'">
+            <div class="technician-crud">
+              <div class="technician-crud-head">
+                <div>
+                  <p class="dashboard-panel-kicker">Usuarios registrados</p>
+                  <h2>Lista de Clientes</h2>
+                </div>
+                <button class="dashboard-refresh-button" type="button" (click)="loadClients()">
+                  Actualizar
+                </button>
+              </div>
+
+              <section class="technician-table-card">
+                <p class="dashboard-loading" *ngIf="isClientsLoading">Cargando clientes...</p>
+                <p class="dashboard-empty" *ngIf="!isClientsLoading && !clients.length">
+                  No hay clientes registrados.
+                </p>
+
+                <div class="dashboard-table-wrap technician-table-wrap" *ngIf="!isClientsLoading && clients.length">
+                  <table class="dashboard-table dashboard-table-technicians">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Cliente</th>
+                        <th>Carnet</th>
+                        <th>Correo</th>
+                        <th>Telefono</th>
+                        <th>Rol</th>
+                        <th>Estado</th>
+                        <th>Registro</th>
+                        <th>Opciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr *ngFor="let client of clients">
+                        <td data-label="ID">
+                          <span class="dashboard-id-chip">#{{ client.id }}</span>
+                        </td>
+                        <td data-label="Cliente">
+                          <div class="dashboard-table-primary">
+                            <strong>{{ client.full_name }}</strong>
+                            <span>{{ client.accepted_terms ? 'Terminos aceptados' : 'Pendiente de terminos' }}</span>
+                          </div>
+                        </td>
+                        <td data-label="Carnet">{{ client.identity_card }}</td>
+                        <td data-label="Correo">{{ client.email }}</td>
+                        <td data-label="Telefono">{{ client.phone }}</td>
+                        <td data-label="Rol">{{ client.role }}</td>
+                        <td data-label="Estado">
+                          <button
+                            class="dashboard-status-pill dashboard-status-button"
+                            type="button"
+                            [attr.data-status]="client.status"
+                            [attr.aria-label]="'Cambiar estado de ' + client.full_name"
+                            (click)="toggleClientStatus(client)"
+                          >
+                            <span class="dashboard-status-dot"></span>
+                            {{ clientStatusLabel(client.status) }}
+                          </button>
+                        </td>
+                        <td data-label="Registro">{{ client.created_at | date: 'short' }}</td>
+                        <td data-label="Opciones">
+                          <div class="workshop-actions">
+                            <button
+                              class="technician-icon-button"
+                              type="button"
+                              (click)="editClient(client)"
+                              [attr.aria-label]="'Editar ' + client.full_name"
+                              title="Editar"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              class="technician-icon-button workshop-delete-button"
+                              type="button"
+                              (click)="deleteClient(client)"
+                              [attr.aria-label]="'Eliminar ' + client.full_name"
+                              title="Eliminar"
+                            >
+                              🗑
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </article>
         </section>
       </section>
 
@@ -654,6 +779,72 @@ type WorkshopFormModel = {
           </form>
         </section>
       </div>
+
+      <div class="dashboard-modal-backdrop" *ngIf="showClientEditModal" (click)="cancelClientEdit()">
+        <section class="dashboard-modal-card" (click)="$event.stopPropagation()">
+          <div class="dashboard-modal-head">
+            <div>
+              <p class="dashboard-panel-kicker">Edición de cliente</p>
+              <h3>Actualizar cliente</h3>
+            </div>
+          </div>
+
+          <form class="workshop-edit-form" (ngSubmit)="submitClientEdit()">
+            <label class="workshop-edit-field">
+              <span>Carnet</span>
+              <input type="text" name="identity_card" [(ngModel)]="clientForm.identity_card" required minlength="5" />
+            </label>
+
+            <label class="workshop-edit-field">
+              <span>Nombre completo</span>
+              <input type="text" name="full_name" [(ngModel)]="clientForm.full_name" required minlength="3" />
+            </label>
+
+            <label class="workshop-edit-field">
+              <span>Correo</span>
+              <input type="email" name="email" [(ngModel)]="clientForm.email" required />
+            </label>
+
+            <label class="workshop-edit-field">
+              <span>Telefono</span>
+              <input type="text" name="phone" [(ngModel)]="clientForm.phone" required minlength="7" />
+            </label>
+
+            <label class="workshop-edit-field">
+              <span>Rol</span>
+              <input type="text" name="role" [(ngModel)]="clientForm.role" required minlength="2" />
+            </label>
+
+            <label class="workshop-edit-field">
+              <span>Estado</span>
+              <select name="status" [(ngModel)]="clientForm.status" required>
+                <option value="active">Activo</option>
+                <option value="suspended">Desactivado</option>
+              </select>
+            </label>
+
+            <label class="workshop-edit-field workshop-edit-field-wide">
+              <span class="client-terms-row">
+                <input type="checkbox" name="accepted_terms" [(ngModel)]="clientForm.accepted_terms" />
+                <span>Terminos aceptados</span>
+              </span>
+            </label>
+
+            <p class="workshop-edit-feedback" *ngIf="clientEditFeedback">
+              {{ clientEditFeedback }}
+            </p>
+
+            <div class="workshop-edit-actions">
+              <button class="dashboard-refresh-button" type="submit" [disabled]="isSavingClient">
+                {{ isSavingClient ? 'Actualizando...' : 'Actualizar' }}
+              </button>
+              <button class="dashboard-secondary-button" type="button" (click)="cancelClientEdit()">
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
     </main>
   `,
   styleUrl: './shared-pages.css',
@@ -662,6 +853,7 @@ export class DashboardPageComponent {
   private readonly http = inject(HttpClient);
   private readonly workshopsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops`;
   private readonly techniciansApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/technicians`;
+  private readonly clientsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/clientes`;
 
   readonly requests: DashboardItem[] = [
     {
@@ -688,17 +880,23 @@ export class DashboardPageComponent {
   isSidebarCollapsed = false;
   workshops: WorkshopRegistration[] = [];
   technicians: Technician[] = [];
+  clients: Client[] = [];
   isLoading = true;
   isTechniciansLoading = true;
+  isClientsLoading = true;
   isSavingTechnician = false;
   isSavingWorkshop = false;
+  isSavingClient = false;
   editingTechnicianId: number | null = null;
   editingWorkshopId: number | null = null;
+  editingClientId: number | null = null;
   technicianFeedback = '';
   workshopEditFeedback = '';
+  clientEditFeedback = '';
   technicianFilter: TechnicianFilter = 'activos';
   showTechnicianForm = false;
   showWorkshopEditModal = false;
+  showClientEditModal = false;
   workshopsPage = 1;
   readonly workshopsPageSize = 15;
   private readonly workshopApprovalStorageKey = 'dashboard-workshop-approval-status';
@@ -706,6 +904,7 @@ export class DashboardPageComponent {
 
   technicianForm: TechnicianFormModel = this.createEmptyTechnicianForm();
   workshopForm: WorkshopFormModel = this.createEmptyWorkshopForm();
+  clientForm: ClientFormModel = this.createEmptyClientForm();
 
   stats: DashboardStat[] = [
     {
@@ -730,6 +929,13 @@ export class DashboardPageComponent {
       tone: 'teal',
     },
     {
+      label: 'Clientes activos',
+      value: '0',
+      detail: 'Usuarios listos para iniciar sesion desde la app movil.',
+      trend: 'App',
+      tone: 'blue',
+    },
+    {
       label: 'Cobertura',
       value: '0 zonas',
       detail: 'Ciudad, periferia y rutas con respuesta coordinada.',
@@ -741,6 +947,23 @@ export class DashboardPageComponent {
   constructor() {
     this.loadWorkshops();
     this.loadTechnicians();
+    this.loadClients();
+  }
+
+  get sectionTitle(): string {
+    if (this.selectedSection === 'technicians') {
+      return 'Gestion de Tecnicos';
+    }
+
+    if (this.selectedSection === 'clients') {
+      return 'Gestion de Clientes';
+    }
+
+    if (this.selectedSection === 'workshops') {
+      return 'Gestion de Solicitudes';
+    }
+
+    return 'Resumen general';
   }
 
   get recentWorkshops(): WorkshopRegistration[] {
@@ -828,6 +1051,18 @@ export class DashboardPageComponent {
     };
   }
 
+  createEmptyClientForm(): ClientFormModel {
+    return {
+      identity_card: '',
+      full_name: '',
+      email: '',
+      phone: '',
+      role: 'client',
+      status: 'active',
+      accepted_terms: true,
+    };
+  }
+
   selectSection(section: DashboardSection): void {
     this.selectedSection = section;
   }
@@ -854,6 +1089,10 @@ export class DashboardPageComponent {
     }
 
     return status.charAt(0).toUpperCase() + status.slice(1);
+  }
+
+  clientStatusLabel(status: ClientStatus): string {
+    return status === 'active' ? 'Activo' : 'Desactivado';
   }
 
   getWorkshopStatus(createdAt: string): string {
@@ -1144,6 +1383,113 @@ export class DashboardPageComponent {
     });
   }
 
+  loadClients(): void {
+    this.isClientsLoading = true;
+
+    this.http.get<Client[]>(this.clientsApiUrl).subscribe({
+      next: (clients) => {
+        this.clients = clients;
+        this.isClientsLoading = false;
+        this.refreshStats();
+      },
+      error: () => {
+        this.clients = [];
+        this.isClientsLoading = false;
+        this.refreshStats();
+      },
+    });
+  }
+
+  toggleClientStatus(client: Client): void {
+    const nextStatus: ClientStatus = client.status === 'active' ? 'suspended' : 'active';
+
+    this.http
+      .put<Client>(`${this.clientsApiUrl}/${client.id}/status`, {
+        status: nextStatus,
+      })
+      .subscribe({
+        next: () => {
+          this.loadClients();
+        },
+      });
+  }
+
+  editClient(client: Client): void {
+    this.editingClientId = client.id;
+    this.clientEditFeedback = '';
+    this.clientForm = {
+      identity_card: client.identity_card,
+      full_name: client.full_name,
+      email: client.email,
+      phone: client.phone,
+      role: client.role,
+      status: client.status,
+      accepted_terms: client.accepted_terms,
+    };
+    this.showClientEditModal = true;
+  }
+
+  cancelClientEdit(): void {
+    this.showClientEditModal = false;
+    this.editingClientId = null;
+    this.isSavingClient = false;
+    this.clientEditFeedback = '';
+    this.clientForm = this.createEmptyClientForm();
+  }
+
+  submitClientEdit(): void {
+    if (!this.editingClientId) {
+      return;
+    }
+
+    const payload = {
+      identity_card: this.clientForm.identity_card.trim(),
+      full_name: this.clientForm.full_name.trim(),
+      email: this.clientForm.email.trim(),
+      phone: this.clientForm.phone.trim(),
+      role: this.clientForm.role.trim(),
+      status: this.clientForm.status,
+      accepted_terms: this.clientForm.accepted_terms,
+    };
+
+    if (!payload.identity_card || !payload.full_name || !payload.email || !payload.phone || !payload.role) {
+      this.clientEditFeedback = 'Completa carnet, nombre, correo, telefono y rol.';
+      return;
+    }
+
+    this.isSavingClient = true;
+    this.clientEditFeedback = '';
+
+    this.http.put<Client>(`${this.clientsApiUrl}/${this.editingClientId}`, payload).subscribe({
+      next: () => {
+        this.isSavingClient = false;
+        this.cancelClientEdit();
+        this.loadClients();
+      },
+      error: () => {
+        this.isSavingClient = false;
+        this.clientEditFeedback = 'No se pudo actualizar el cliente.';
+      },
+    });
+  }
+
+  deleteClient(client: Client): void {
+    const confirmed = window.confirm(`¿Deseas eliminar a ${client.full_name}?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    this.http.delete(`${this.clientsApiUrl}/${client.id}`).subscribe({
+      next: () => {
+        this.loadClients();
+      },
+      error: () => {
+        window.alert('No se pudo eliminar el cliente.');
+      },
+    });
+  }
+
   private normalizeWorkshopApprovalStatus(value: string): WorkshopApprovalStatus | null {
     const normalized = value.trim().toLowerCase();
 
@@ -1194,6 +1540,17 @@ export class DashboardPageComponent {
           detail: this.technicians.length
             ? 'Estado actualizado segun el tecnico registrado en el panel.'
             : 'Aun no se registraron tecnicos en el sistema.',
+        };
+      }
+
+      if (stat.label === 'Clientes activos') {
+        const activeClients = this.clients.filter((client) => client.status === 'active').length;
+        return {
+          ...stat,
+          value: String(activeClients),
+          detail: this.clients.length
+            ? 'Clientes con acceso habilitado para autenticacion movil.'
+            : 'Aun no se registraron clientes en el sistema.',
         };
       }
 

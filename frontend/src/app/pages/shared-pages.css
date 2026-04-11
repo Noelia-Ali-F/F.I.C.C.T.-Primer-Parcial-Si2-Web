@@ -1881,7 +1881,8 @@
   font-weight: 700;
 }
 
-.workshop-edit-field input {
+.workshop-edit-field input,
+.workshop-edit-field select {
   min-height: 2.85rem;
   padding: 0.72rem 0.9rem;
   border-radius: 14px;
@@ -1889,6 +1890,18 @@
   background: rgba(255, 255, 255, 0.96);
   color: #24304d;
   font: inherit;
+}
+
+.client-terms-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.client-terms-row input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
 }
 
 .workshop-edit-field-wide,
@@ -2045,6 +2058,16 @@
 }
 
 .dashboard-status-pill[data-status='rechazada'] {
+  background: rgba(198, 74, 58, 0.14);
+  color: #9f3024;
+}
+
+.dashboard-status-pill[data-status='active'] {
+  background: rgba(32, 170, 111, 0.14);
+  color: #14724b;
+}
+
+.dashboard-status-pill[data-status='suspended'] {
   background: rgba(198, 74, 58, 0.14);
   color: #9f3024;
 }

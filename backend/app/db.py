@@ -42,6 +42,24 @@ CREATE_TECHNICIANS_TABLE_SQL = text(
     """
 )
 
+CREATE_CLIENTS_TABLE_SQL = text(
+    """
+    CREATE TABLE IF NOT EXISTS clients (
+        id BIGSERIAL PRIMARY KEY,
+        identity_card VARCHAR(40) NOT NULL UNIQUE,
+        full_name VARCHAR(160) NOT NULL,
+        email VARCHAR(160) NOT NULL UNIQUE,
+        phone VARCHAR(40) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        role VARCHAR(40) NOT NULL DEFAULT 'client',
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        accepted_terms BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """
+)
+
 INSERT_WORKSHOP_SQL = text(
     """
     INSERT INTO workshop_registrations (
@@ -218,6 +236,136 @@ DELETE_TECHNICIAN_SQL = text(
     """
 )
 
+INSERT_CLIENT_SQL = text(
+    """
+    INSERT INTO clients (
+        identity_card,
+        full_name,
+        email,
+        phone,
+        password_hash,
+        role,
+        status,
+        accepted_terms
+    )
+    VALUES (
+        :identity_card,
+        :full_name,
+        :email,
+        :phone,
+        :password_hash,
+        :role,
+        :status,
+        :accepted_terms
+    )
+    RETURNING
+        id,
+        identity_card,
+        full_name,
+        email,
+        phone,
+        role,
+        status,
+        accepted_terms,
+        created_at,
+        updated_at
+    """
+)
+
+UPDATE_CLIENT_SQL = text(
+    """
+    UPDATE clients
+    SET
+        identity_card = :identity_card,
+        full_name = :full_name,
+        email = :email,
+        phone = :phone,
+        role = :role,
+        status = :status,
+        accepted_terms = :accepted_terms,
+        updated_at = NOW()
+    WHERE id = :id
+    RETURNING
+        id,
+        identity_card,
+        full_name,
+        email,
+        phone,
+        role,
+        status,
+        accepted_terms,
+        created_at,
+        updated_at
+    """
+)
+
+LIST_CLIENTS_SQL = text(
+    """
+    SELECT
+        id,
+        identity_card,
+        full_name,
+        email,
+        phone,
+        role,
+        status,
+        accepted_terms,
+        created_at,
+        updated_at
+    FROM clients
+    ORDER BY created_at DESC, id DESC
+    """
+)
+
+GET_CLIENT_BY_EMAIL_SQL = text(
+    """
+    SELECT
+        id,
+        identity_card,
+        full_name,
+        email,
+        phone,
+        password_hash,
+        role,
+        status,
+        accepted_terms,
+        created_at,
+        updated_at
+    FROM clients
+    WHERE email = :email
+    LIMIT 1
+    """
+)
+
+UPDATE_CLIENT_STATUS_SQL = text(
+    """
+    UPDATE clients
+    SET
+        status = :status,
+        updated_at = NOW()
+    WHERE id = :id
+    RETURNING
+        id,
+        identity_card,
+        full_name,
+        email,
+        phone,
+        role,
+        status,
+        accepted_terms,
+        created_at,
+        updated_at
+    """
+)
+
+DELETE_CLIENT_SQL = text(
+    """
+    DELETE FROM clients
+    WHERE id = :id
+    RETURNING id
+    """
+)
+
 
 def check_database_connection() -> bool:
     with engine.connect() as connection:
@@ -229,12 +377,20 @@ def init_database() -> None:
     with engine.begin() as connection:
         connection.execute(CREATE_WORKSHOPS_TABLE_SQL)
         connection.execute(CREATE_TECHNICIANS_TABLE_SQL)
+        connection.execute(CREATE_CLIENTS_TABLE_SQL)
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS email VARCHAR(160)"))
         connection.execute(
             text("ALTER TABLE workshop_registrations ADD COLUMN IF NOT EXISTS timezone VARCHAR(120)")
         )
         connection.execute(
             text("ALTER TABLE workshop_registrations ADD COLUMN IF NOT EXISTS utc_offset_minutes INTEGER")
+        )
+        connection.execute(text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS role VARCHAR(40) DEFAULT 'client'"))
+        connection.execute(
+            text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'active'")
+        )
+        connection.execute(
+            text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS accepted_terms BOOLEAN NOT NULL DEFAULT FALSE")
         )
 
 
@@ -290,5 +446,47 @@ def update_technician(technician_id: int, payload: Mapping[str, object]) -> dict
 def delete_technician(technician_id: int) -> bool:
     with engine.begin() as connection:
         result = connection.execute(DELETE_TECHNICIAN_SQL, {"id": technician_id})
+        row = result.mappings().one_or_none()
+    return row is not None
+
+
+def create_client(payload: Mapping[str, object]) -> dict[str, object]:
+    with engine.begin() as connection:
+        result = connection.execute(INSERT_CLIENT_SQL, payload)
+        row = result.mappings().one()
+    return dict(row)
+
+
+def list_clients() -> list[dict[str, object]]:
+    with engine.connect() as connection:
+        result = connection.execute(LIST_CLIENTS_SQL)
+        rows = result.mappings().all()
+    return [dict(row) for row in rows]
+
+
+def get_client_by_email(email: str) -> dict[str, object] | None:
+    with engine.connect() as connection:
+        result = connection.execute(GET_CLIENT_BY_EMAIL_SQL, {"email": email})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def update_client_status(client_id: int, status: str) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(UPDATE_CLIENT_STATUS_SQL, {"id": client_id, "status": status})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def update_client(client_id: int, payload: Mapping[str, object]) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(UPDATE_CLIENT_SQL, {"id": client_id, **payload})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def delete_client(client_id: int) -> bool:
+    with engine.begin() as connection:
+        result = connection.execute(DELETE_CLIENT_SQL, {"id": client_id})
         row = result.mappings().one_or_none()
     return row is not None
