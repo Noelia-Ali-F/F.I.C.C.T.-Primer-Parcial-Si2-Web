@@ -79,6 +79,8 @@ __pycache__/
 *.pyd
 .python-version
 .venv/
+.venv.test/
+.venv.broken/
 venv/
 env/
 ENV/
@@ -177,15 +179,22 @@ postgres_data/
 # Project-specific local env files
 /backend/.env
 /frontend/.env
+/backend/uploads/
+/uploads/
 
 # Angular build and local cache
 /frontend/dist/
 /frontend/node_modules/
 /frontend/.angular/
+/frontend/.sass-cache/
 
 # Python local artifacts
 /backend/__pycache__/
+/backend/app/__pycache__/
 /backend/.pytest_cache/
+/backend/.venv/
+/backend/.venv.test/
+/backend/.venv.broken/
 
 # Local database or backup files
 *.sqlite3

@@ -5,7 +5,11 @@ from sqlalchemy import create_engine, text
 from app.config import settings
 
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+engine = create_engine(
+    settings.database_url,
+    pool_pre_ping=True,
+    connect_args={"connect_timeout": settings.postgres_connect_timeout},
+)
 
 
 CREATE_WORKSHOPS_TABLE_SQL = text(
@@ -56,6 +60,24 @@ CREATE_CLIENTS_TABLE_SQL = text(
         accepted_terms BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """
+)
+
+CREATE_VEHICLES_TABLE_SQL = text(
+    """
+    CREATE TABLE IF NOT EXISTS vehicles (
+        id BIGSERIAL PRIMARY KEY,
+        client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
+        brand VARCHAR(120) NOT NULL,
+        model VARCHAR(120) NOT NULL,
+        year INTEGER NOT NULL,
+        plate VARCHAR(40) NOT NULL UNIQUE,
+        color VARCHAR(80) NOT NULL,
+        is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+        photo_path VARCHAR(255),
+        photo_url VARCHAR(255),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """
 )
@@ -280,6 +302,7 @@ UPDATE_CLIENT_SQL = text(
         full_name = :full_name,
         email = :email,
         phone = :phone,
+        password_hash = COALESCE(:password_hash, password_hash),
         role = :role,
         status = :status,
         accepted_terms = :accepted_terms,
@@ -337,6 +360,26 @@ GET_CLIENT_BY_EMAIL_SQL = text(
     """
 )
 
+GET_CLIENT_BY_ID_SQL = text(
+    """
+    SELECT
+        id,
+        identity_card,
+        full_name,
+        email,
+        phone,
+        password_hash,
+        role,
+        status,
+        accepted_terms,
+        created_at,
+        updated_at
+    FROM clients
+    WHERE id = :id
+    LIMIT 1
+    """
+)
+
 UPDATE_CLIENT_STATUS_SQL = text(
     """
     UPDATE clients
@@ -366,6 +409,129 @@ DELETE_CLIENT_SQL = text(
     """
 )
 
+DELETE_CLIENT_VEHICLES_SQL = text(
+    """
+    DELETE FROM vehicles
+    WHERE client_id = :client_id
+    """
+)
+
+INSERT_VEHICLE_SQL = text(
+    """
+    INSERT INTO vehicles (
+        client_id,
+        brand,
+        model,
+        year,
+        plate,
+        color,
+        is_primary,
+        photo_path,
+        photo_url
+    )
+    VALUES (
+        :client_id,
+        :brand,
+        :model,
+        :year,
+        :plate,
+        :color,
+        :is_primary,
+        :photo_path,
+        :photo_url
+    )
+    RETURNING
+        id,
+        client_id,
+        brand,
+        model,
+        year,
+        plate,
+        color,
+        is_primary,
+        photo_path,
+        photo_url,
+        created_at
+    """
+)
+
+LIST_VEHICLES_SQL = text(
+    """
+    SELECT
+        id,
+        client_id,
+        brand,
+        model,
+        year,
+        plate,
+        color,
+        is_primary,
+        photo_path,
+        photo_url,
+        created_at
+    FROM vehicles
+    WHERE client_id = :client_id
+    ORDER BY created_at DESC, id DESC
+    """
+)
+
+GET_VEHICLE_BY_ID_SQL = text(
+    """
+    SELECT
+        id,
+        client_id,
+        brand,
+        model,
+        year,
+        plate,
+        color,
+        is_primary,
+        photo_path,
+        photo_url,
+        created_at
+    FROM vehicles
+    WHERE id = :id AND client_id = :client_id
+    LIMIT 1
+    """
+)
+
+UPDATE_VEHICLE_SQL = text(
+    """
+    UPDATE vehicles
+    SET
+        client_id = :client_id,
+        brand = :brand,
+        model = :model,
+        year = :year,
+        plate = :plate,
+        color = :color,
+        is_primary = :is_primary,
+        photo_path = :photo_path,
+        photo_url = :photo_url
+    WHERE id = :id AND client_id = :client_id
+    RETURNING
+        id,
+        client_id,
+        brand,
+        model,
+        year,
+        plate,
+        color,
+        is_primary,
+        photo_path,
+        photo_url,
+        created_at
+    """
+)
+
+DELETE_VEHICLE_SQL = text(
+    """
+    DELETE FROM vehicles
+    WHERE id = :id AND client_id = :client_id
+    RETURNING id, client_id, photo_path
+    """
+)
+
 
 def check_database_connection() -> bool:
     with engine.connect() as connection:
@@ -378,6 +544,7 @@ def init_database() -> None:
         connection.execute(CREATE_WORKSHOPS_TABLE_SQL)
         connection.execute(CREATE_TECHNICIANS_TABLE_SQL)
         connection.execute(CREATE_CLIENTS_TABLE_SQL)
+        connection.execute(CREATE_VEHICLES_TABLE_SQL)
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS email VARCHAR(160)"))
         connection.execute(
             text("ALTER TABLE workshop_registrations ADD COLUMN IF NOT EXISTS timezone VARCHAR(120)")
@@ -392,6 +559,27 @@ def init_database() -> None:
         connection.execute(
             text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS accepted_terms BOOLEAN NOT NULL DEFAULT FALSE")
         )
+        connection.execute(text("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS client_id BIGINT"))
+        connection.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'vehicles_client_id_fkey'
+                    ) THEN
+                        ALTER TABLE vehicles
+                        ADD CONSTRAINT vehicles_client_id_fkey
+                        FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE;
+                    END IF;
+                END$$;
+                """
+            )
+        )
+        connection.execute(text("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS photo_path VARCHAR(255)"))
+        connection.execute(text("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS photo_url VARCHAR(255)"))
 
 
 def create_workshop_registration(payload: Mapping[str, object]) -> dict[str, object]:
@@ -471,6 +659,13 @@ def get_client_by_email(email: str) -> dict[str, object] | None:
     return dict(row) if row else None
 
 
+def get_client_by_id(client_id: int) -> dict[str, object] | None:
+    with engine.connect() as connection:
+        result = connection.execute(GET_CLIENT_BY_ID_SQL, {"id": client_id})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
 def update_client_status(client_id: int, status: str) -> dict[str, object] | None:
     with engine.begin() as connection:
         result = connection.execute(UPDATE_CLIENT_STATUS_SQL, {"id": client_id, "status": status})
@@ -487,6 +682,42 @@ def update_client(client_id: int, payload: Mapping[str, object]) -> dict[str, ob
 
 def delete_client(client_id: int) -> bool:
     with engine.begin() as connection:
+        connection.execute(DELETE_CLIENT_VEHICLES_SQL, {"client_id": client_id})
         result = connection.execute(DELETE_CLIENT_SQL, {"id": client_id})
         row = result.mappings().one_or_none()
     return row is not None
+
+
+def create_vehicle(payload: Mapping[str, object]) -> dict[str, object]:
+    with engine.begin() as connection:
+        result = connection.execute(INSERT_VEHICLE_SQL, payload)
+        row = result.mappings().one()
+    return dict(row)
+
+
+def list_vehicles(client_id: int) -> list[dict[str, object]]:
+    with engine.connect() as connection:
+        result = connection.execute(LIST_VEHICLES_SQL, {"client_id": client_id})
+        rows = result.mappings().all()
+    return [dict(row) for row in rows]
+
+
+def get_vehicle_by_id(vehicle_id: int, client_id: int) -> dict[str, object] | None:
+    with engine.connect() as connection:
+        result = connection.execute(GET_VEHICLE_BY_ID_SQL, {"id": vehicle_id, "client_id": client_id})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def update_vehicle(vehicle_id: int, payload: Mapping[str, object]) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(UPDATE_VEHICLE_SQL, {"id": vehicle_id, **payload})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def delete_vehicle(vehicle_id: int, client_id: int) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(DELETE_VEHICLE_SQL, {"id": vehicle_id, "client_id": client_id})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None

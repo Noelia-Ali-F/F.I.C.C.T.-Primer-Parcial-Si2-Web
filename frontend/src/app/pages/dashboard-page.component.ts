@@ -81,6 +81,7 @@ type ClientFormModel = {
   full_name: string;
   email: string;
   phone: string;
+  password: string;
   role: string;
   status: ClientStatus;
   accepted_terms: boolean;
@@ -676,20 +677,20 @@ type WorkshopFormModel = {
                         <td data-label="Opciones">
                           <div class="workshop-actions">
                             <button
-                              class="technician-icon-button"
+                              class="technician-icon-button client-action-tooltip"
                               type="button"
                               (click)="editClient(client)"
                               [attr.aria-label]="'Editar ' + client.full_name"
-                              title="Editar"
+                              data-tooltip="Editar"
                             >
                               ✎
                             </button>
                             <button
-                              class="technician-icon-button workshop-delete-button"
+                              class="technician-icon-button workshop-delete-button client-action-tooltip"
                               type="button"
                               (click)="deleteClient(client)"
                               [attr.aria-label]="'Eliminar ' + client.full_name"
-                              title="Eliminar"
+                              data-tooltip="Eliminar"
                             >
                               🗑
                             </button>
@@ -811,6 +812,17 @@ type WorkshopFormModel = {
             </label>
 
             <label class="workshop-edit-field">
+              <span>Nueva contraseña</span>
+              <input
+                type="password"
+                name="password"
+                [(ngModel)]="clientForm.password"
+                minlength="6"
+                placeholder="Dejar vacio para mantener la actual"
+              />
+            </label>
+
+            <label class="workshop-edit-field">
               <span>Rol</span>
               <input type="text" name="role" [(ngModel)]="clientForm.role" required minlength="2" />
             </label>
@@ -843,6 +855,35 @@ type WorkshopFormModel = {
               </button>
             </div>
           </form>
+        </section>
+      </div>
+
+      <div class="dashboard-modal-backdrop" *ngIf="showClientDeleteModal" (click)="cancelClientDelete()">
+        <section class="dashboard-modal-card" (click)="$event.stopPropagation()">
+          <div class="dashboard-modal-head">
+            <div>
+              <p class="dashboard-panel-kicker">Edición de cliente</p>
+              <h3>Eliminar cliente</h3>
+            </div>
+          </div>
+
+          <div class="client-delete-modal-copy">
+            <p>
+              ¿Deseas eliminar a <strong>{{ clientPendingDelete?.full_name }}</strong>?
+            </p>
+            <p class="client-delete-modal-note">
+              El registro se quitará de la lista de clientes, también se eliminarán sus vehículos registrados y esta acción no se podrá deshacer.
+            </p>
+          </div>
+
+          <div class="workshop-edit-actions">
+            <button class="client-delete-confirm-button" type="button" (click)="confirmClientDelete()">
+              Eliminar cliente
+            </button>
+            <button class="dashboard-secondary-button" type="button" (click)="cancelClientDelete()">
+              Cancelar
+            </button>
+          </div>
         </section>
       </div>
     </main>
@@ -897,10 +938,12 @@ export class DashboardPageComponent {
   showTechnicianForm = false;
   showWorkshopEditModal = false;
   showClientEditModal = false;
+  showClientDeleteModal = false;
   workshopsPage = 1;
   readonly workshopsPageSize = 15;
   private readonly workshopApprovalStorageKey = 'dashboard-workshop-approval-status';
   private workshopApprovalState: Record<number, WorkshopApprovalStatus> = this.readWorkshopApprovalState();
+  clientPendingDelete: Client | null = null;
 
   technicianForm: TechnicianFormModel = this.createEmptyTechnicianForm();
   workshopForm: WorkshopFormModel = this.createEmptyWorkshopForm();
@@ -1057,6 +1100,7 @@ export class DashboardPageComponent {
       full_name: '',
       email: '',
       phone: '',
+      password: '',
       role: 'client',
       status: 'active',
       accepted_terms: true,
@@ -1422,6 +1466,7 @@ export class DashboardPageComponent {
       full_name: client.full_name,
       email: client.email,
       phone: client.phone,
+      password: '',
       role: client.role,
       status: client.status,
       accepted_terms: client.accepted_terms,
@@ -1447,6 +1492,7 @@ export class DashboardPageComponent {
       full_name: this.clientForm.full_name.trim(),
       email: this.clientForm.email.trim(),
       phone: this.clientForm.phone.trim(),
+      password: this.clientForm.password.trim(),
       role: this.clientForm.role.trim(),
       status: this.clientForm.status,
       accepted_terms: this.clientForm.accepted_terms,
@@ -1454,6 +1500,11 @@ export class DashboardPageComponent {
 
     if (!payload.identity_card || !payload.full_name || !payload.email || !payload.phone || !payload.role) {
       this.clientEditFeedback = 'Completa carnet, nombre, correo, telefono y rol.';
+      return;
+    }
+
+    if (payload.password && payload.password.length < 6) {
+      this.clientEditFeedback = 'La nueva contraseña debe tener al menos 6 caracteres.';
       return;
     }
 
@@ -1474,14 +1525,23 @@ export class DashboardPageComponent {
   }
 
   deleteClient(client: Client): void {
-    const confirmed = window.confirm(`¿Deseas eliminar a ${client.full_name}?`);
+    this.clientPendingDelete = client;
+    this.showClientDeleteModal = true;
+  }
 
-    if (!confirmed) {
+  cancelClientDelete(): void {
+    this.showClientDeleteModal = false;
+    this.clientPendingDelete = null;
+  }
+
+  confirmClientDelete(): void {
+    if (!this.clientPendingDelete) {
       return;
     }
 
-    this.http.delete(`${this.clientsApiUrl}/${client.id}`).subscribe({
+    this.http.delete(`${this.clientsApiUrl}/${this.clientPendingDelete.id}`).subscribe({
       next: () => {
+        this.cancelClientDelete();
         this.loadClients();
       },
       error: () => {

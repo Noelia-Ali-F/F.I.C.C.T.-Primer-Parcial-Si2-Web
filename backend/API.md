@@ -180,11 +180,14 @@ Actualiza los datos administrativos de un cliente.
   "full_name": "Jhasmany Fernandez",
   "email": "jhasmany@gmail.com",
   "phone": "72992000",
+  "password": "NuevaClave123",
   "role": "client",
   "status": "active",
   "accepted_terms": true
 }
 ```
+
+El campo `password` es opcional en esta edición. Si se envía, el backend actualiza la contraseña del cliente; si se omite o va vacío, conserva la actual.
 
 ### `DELETE /api/clientes/{client_id}`
 
@@ -371,6 +374,171 @@ Ejemplo:
 ```bash
 curl -X DELETE http://localhost:8000/api/workshops/1
 ```
+
+### `POST /api/vehiculos`
+
+Registra un vehiculo desde la app movil usando `multipart/form-data`.
+
+#### Campos enviados
+
+- `client_id`: identificador del cliente propietario del vehiculo
+- `brand`: marca del vehiculo
+- `model`: modelo del vehiculo
+- `year`: anio del vehiculo
+- `plate`: placa
+- `color`: color
+- `is_primary`: `true` o `false`
+- `photo`: archivo opcional en formato `jpg`, `jpeg`, `png` o `webp`
+
+#### Ejemplo con curl
+
+```bash
+curl -X POST http://localhost:8000/api/vehiculos \
+  -F "client_id=15" \
+  -F "brand=Toyota" \
+  -F "model=Corolla" \
+  -F "year=2018" \
+  -F "plate=1023HHNNI" \
+  -F "color=gris" \
+  -F "is_primary=true" \
+  -F "photo=@/ruta/opcional/vehiculo.jpg"
+```
+
+#### Respuesta exitosa
+
+Codigo: `201 Created`
+
+```json
+{
+  "id": 1,
+  "client_id": 15,
+  "brand": "Toyota",
+  "model": "Corolla",
+  "year": 2018,
+  "plate": "1023HHNNI",
+  "color": "gris",
+  "is_primary": true,
+  "photo_path": "vehicles/archivo_generado.jpg",
+  "photo_url": "/uploads/vehicles/archivo_generado.jpg",
+  "created_at": "2026-04-11T21:10:00.000000Z"
+}
+```
+
+#### Errores posibles
+
+- `400 Bad Request`: foto con formato no permitido
+- `404 Not Found`: cliente no encontrado
+- `409 Conflict`: ya existe un vehiculo con esa placa
+- `422 Unprocessable Entity`: datos faltantes o invalidos
+
+### `GET /api/vehiculos`
+
+Lista los vehiculos registrados de un cliente en orden descendente de creacion.
+
+#### Ejemplo
+
+```bash
+curl "http://localhost:8000/api/vehiculos?client_id=15"
+```
+
+#### Respuesta exitosa
+
+Codigo: `200 OK`
+
+```json
+[
+  {
+    "id": 2,
+    "client_id": 15,
+    "brand": "Suzuki",
+    "model": "Vitara",
+    "year": 2021,
+    "plate": "REMOTE20260411",
+    "color": "negro",
+    "is_primary": false,
+    "photo_path": null,
+    "photo_url": null,
+    "created_at": "2026-04-11T06:12:01.102533Z"
+  },
+  {
+    "id": 1,
+    "client_id": 15,
+    "brand": "Suzuki",
+    "model": "Vitara",
+    "year": 2021,
+    "plate": "PRUEBA20260411",
+    "color": "negro",
+    "is_primary": false,
+    "photo_path": null,
+    "photo_url": null,
+    "created_at": "2026-04-11T06:07:52.203747Z"
+  }
+]
+```
+
+#### Reglas
+
+- `client_id` es obligatorio como query param
+- el backend filtra por `client_id`
+- si el cliente no existe, responde `404 Not Found`
+
+### `DELETE /api/vehiculos/{vehicle_id}`
+
+Elimina un vehiculo por su identificador. Si el vehiculo tenia foto guardada, tambien elimina el archivo asociado.
+La eliminacion valida pertenencia usando `client_id`.
+
+#### Ejemplo
+
+```bash
+curl -X DELETE "http://localhost:8000/api/vehiculos/1?client_id=15"
+```
+
+#### Respuestas
+
+- `204 No Content`: vehiculo eliminado
+- `404 Not Found`: vehiculo no encontrado
+- `503 Service Unavailable`: base de datos no disponible
+
+### `PUT /api/vehiculos/{vehicle_id}`
+
+Actualiza un vehiculo existente usando `multipart/form-data`. La foto es opcional; si no se envia una nueva, se conserva la actual.
+
+#### Campos enviados
+
+- `client_id`
+- `brand`
+- `model`
+- `year`
+- `plate`
+- `color`
+- `is_primary`
+- `photo` opcional
+
+#### Ejemplo
+
+```bash
+curl -X PUT http://localhost:8000/api/vehiculos/3 \
+  -F "client_id=15" \
+  -F "brand=Suzuki" \
+  -F "model=Vitara GLX" \
+  -F "year=2022" \
+  -F "plate=REMOTE20260411B" \
+  -F "color=gris grafito" \
+  -F "is_primary=true"
+```
+
+#### Respuestas
+
+- `200 OK`: vehiculo actualizado
+- `404 Not Found`: vehiculo no encontrado
+- `409 Conflict`: placa duplicada
+- `503 Service Unavailable`: base de datos no disponible
+
+#### Reglas
+
+- `client_id` es obligatorio
+- el backend valida que el vehiculo pertenezca a ese `client_id`
+- si el vehiculo no pertenece al cliente indicado, responde `404 Not Found`
 
 ### `POST /api/technicians`
 

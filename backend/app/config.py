@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     postgres_password: str = "diagramador"
     postgres_host: str = "db"
     postgres_port: int = 5432
+    postgres_connect_timeout: int = 5
+    uploads_dir: str = "uploads"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -28,4 +30,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

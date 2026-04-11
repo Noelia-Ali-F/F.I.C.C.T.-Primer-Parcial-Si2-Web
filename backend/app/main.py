@@ -1,31 +1,48 @@
 from datetime import datetime
 import hashlib
+import logging
+from pathlib import Path
 import secrets
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.config import settings
 from app.db import (
     check_database_connection,
     create_client,
     create_technician,
+    create_vehicle,
     create_workshop_registration,
     delete_client,
+    delete_vehicle,
     delete_workshop_registration,
     delete_technician,
     get_client_by_email,
+    get_client_by_id,
+    get_vehicle_by_id,
     init_database,
     list_clients,
     list_technicians,
+    list_vehicles,
     list_workshop_registrations,
     update_client,
     update_client_status,
+    update_vehicle,
     update_workshop_registration,
     update_technician,
 )
+
+
+UPLOADS_ROOT = Path(settings.uploads_dir)
+VEHICLE_UPLOADS_DIR = UPLOADS_ROOT / "vehicles"
+UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
+VEHICLE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+logger = logging.getLogger(__name__)
 
 
 class WorkshopRegistrationCreate(BaseModel):
@@ -161,9 +178,26 @@ class ClientUpdate(BaseModel):
     full_name: str = Field(min_length=3, max_length=160)
     email: EmailStr
     phone: str = Field(min_length=7, max_length=40)
+    password: str | None = Field(default=None, min_length=6, max_length=255)
     role: str = Field(min_length=2, max_length=40)
     status: str = Field(pattern="^(active|suspended)$")
     accepted_terms: bool = True
+
+
+class VehicleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_id: int
+    brand: str
+    model: str
+    year: int
+    plate: str
+    color: str
+    is_primary: bool
+    photo_path: str | None = None
+    photo_url: str | None = None
+    created_at: datetime
 
 
 def hash_password(password: str) -> str:
@@ -187,11 +221,68 @@ def verify_password(password: str, password_hash: str) -> bool:
     return secrets.compare_digest(candidate_digest, expected_digest)
 
 
+def normalize_plate(plate: str) -> str:
+    return plate.strip().upper()
+
+
+def ensure_client_exists(client_id: int) -> None:
+    try:
+        client = get_client_by_id(client_id)
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    if not client:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
+
+
+def save_vehicle_photo(photo: UploadFile | None) -> tuple[str | None, str | None]:
+    if photo is None or not photo.filename:
+        return None, None
+
+    suffix = Path(photo.filename).suffix.lower()
+    allowed_suffixes = {".jpg", ".jpeg", ".png", ".webp"}
+
+    if suffix not in allowed_suffixes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La foto debe ser JPG, JPEG, PNG o WEBP",
+        )
+
+    filename = f"{uuid4().hex}{suffix}"
+    relative_path = f"vehicles/{filename}"
+    absolute_path = VEHICLE_UPLOADS_DIR / filename
+
+    with absolute_path.open("wb") as buffer:
+        while chunk := photo.file.read(1024 * 1024):
+            buffer.write(chunk)
+
+    return relative_path, f"/uploads/{relative_path}"
+
+
+def remove_vehicle_photo(photo_path: str | None) -> None:
+    if not photo_path:
+        return
+
+    candidate = (UPLOADS_ROOT / photo_path).resolve()
+
+    try:
+        candidate.relative_to(UPLOADS_ROOT.resolve())
+    except ValueError:
+        return
+
+    if candidate.is_file():
+        candidate.unlink()
+
+
 app = FastAPI(
     title=settings.app_name,
     debug=settings.app_debug,
     version="0.1.0",
 )
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_ROOT)), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
@@ -213,7 +304,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup() -> None:
-    init_database()
+    try:
+        init_database()
+    except OperationalError:
+        logger.exception("No se pudo inicializar la base de datos en startup")
 
 
 @app.get("/")
@@ -245,6 +339,159 @@ def healthcheck() -> dict[str, object]:
 def register_workshop(payload: WorkshopRegistrationCreate) -> WorkshopRegistrationResponse:
     created = create_workshop_registration(payload.model_dump())
     return WorkshopRegistrationResponse.model_validate(created)
+
+
+@app.post(
+    f"{settings.api_prefix}/vehiculos",
+    response_model=VehicleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_vehicle(
+    client_id: int = Form(ge=1),
+    brand: str = Form(min_length=1, max_length=120),
+    model: str = Form(min_length=1, max_length=120),
+    year: int = Form(ge=1900, le=2100),
+    plate: str = Form(min_length=3, max_length=40),
+    color: str = Form(min_length=2, max_length=80),
+    is_primary: bool = Form(default=False),
+    photo: UploadFile | None = File(default=None),
+) -> VehicleResponse:
+    ensure_client_exists(client_id)
+    photo_path, photo_url = save_vehicle_photo(photo)
+    vehicle_payload = {
+        "client_id": client_id,
+        "brand": brand.strip(),
+        "model": model.strip(),
+        "year": year,
+        "plate": normalize_plate(plate),
+        "color": color.strip(),
+        "is_primary": is_primary,
+        "photo_path": photo_path,
+        "photo_url": photo_url,
+    }
+
+    try:
+        created = create_vehicle(vehicle_payload)
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe un vehiculo con esa placa",
+        ) from exc
+
+    return VehicleResponse.model_validate(created)
+
+
+@app.get(
+    f"{settings.api_prefix}/vehiculos",
+    response_model=list[VehicleResponse],
+)
+def get_vehicles(client_id: int = Query(ge=1)) -> list[VehicleResponse]:
+    ensure_client_exists(client_id)
+    try:
+        rows = list_vehicles(client_id)
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    return [VehicleResponse.model_validate(row) for row in rows]
+
+
+@app.put(
+    f"{settings.api_prefix}/vehiculos/{{vehicle_id}}",
+    response_model=VehicleResponse,
+)
+def edit_vehicle(
+    vehicle_id: int,
+    client_id: int = Form(ge=1),
+    brand: str = Form(min_length=1, max_length=120),
+    model: str = Form(min_length=1, max_length=120),
+    year: int = Form(ge=1900, le=2100),
+    plate: str = Form(min_length=3, max_length=40),
+    color: str = Form(min_length=2, max_length=80),
+    is_primary: bool = Form(default=False),
+    photo: UploadFile | None = File(default=None),
+) -> VehicleResponse:
+    ensure_client_exists(client_id)
+    try:
+        current_vehicle = get_vehicle_by_id(vehicle_id, client_id)
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    if not current_vehicle:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehiculo no encontrado")
+
+    new_photo_path, new_photo_url = save_vehicle_photo(photo)
+    photo_path = new_photo_path if new_photo_path is not None else current_vehicle.get("photo_path")
+    photo_url = new_photo_url if new_photo_url is not None else current_vehicle.get("photo_url")
+
+    vehicle_payload = {
+        "client_id": client_id,
+        "brand": brand.strip(),
+        "model": model.strip(),
+        "year": year,
+        "plate": normalize_plate(plate),
+        "color": color.strip(),
+        "is_primary": is_primary,
+        "photo_path": photo_path,
+        "photo_url": photo_url,
+    }
+
+    try:
+        updated = update_vehicle(vehicle_id, vehicle_payload)
+    except OperationalError as exc:
+        if new_photo_path is not None:
+            remove_vehicle_photo(new_photo_path)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+    except IntegrityError as exc:
+        if new_photo_path is not None:
+            remove_vehicle_photo(new_photo_path)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe un vehiculo con esa placa",
+        ) from exc
+
+    if not updated:
+        if new_photo_path is not None:
+            remove_vehicle_photo(new_photo_path)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehiculo no encontrado")
+
+    if new_photo_path is not None:
+        remove_vehicle_photo(str(current_vehicle.get("photo_path")) if current_vehicle.get("photo_path") else None)
+
+    return VehicleResponse.model_validate(updated)
+
+
+@app.delete(
+    f"{settings.api_prefix}/vehiculos/{{vehicle_id}}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_vehicle(vehicle_id: int, client_id: int = Query(ge=1)) -> None:
+    ensure_client_exists(client_id)
+    try:
+        deleted = delete_vehicle(vehicle_id, client_id)
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehiculo no encontrado")
+
+    remove_vehicle_photo(str(deleted.get("photo_path")) if deleted.get("photo_path") else None)
 
 
 @app.get(
@@ -335,8 +582,19 @@ def edit_client_status(client_id: int, payload: ClientStatusUpdate) -> ClientReg
     response_model=ClientRegistrationResponse,
 )
 def edit_client(client_id: int, payload: ClientUpdate) -> ClientRegistrationResponse:
+    client_payload = {
+        "identity_card": payload.identity_card,
+        "full_name": payload.full_name,
+        "email": payload.email,
+        "phone": payload.phone,
+        "password_hash": hash_password(payload.password) if payload.password else None,
+        "role": payload.role,
+        "status": payload.status,
+        "accepted_terms": payload.accepted_terms,
+    }
+
     try:
-        updated = update_client(client_id, payload.model_dump())
+        updated = update_client(client_id, client_payload)
     except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
