@@ -94,7 +94,6 @@ import { ValidationDialogComponent } from './validation-dialog.component';
   styleUrl: './shared-pages.css',
 })
 export class LoginPageComponent {
-  private readonly workshopInitialPassword = 'acb123*';
   private readonly emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   private readonly http = inject(HttpClient);
   private readonly dialog = inject(MatDialog);
@@ -147,24 +146,33 @@ export class LoginPageComponent {
             return;
           }
 
-          if (response.role === 'workshop' && this.form.password === this.workshopInitialPassword) {
-            this.isSubmitting = false;
-            await this.router.navigate(['/forgot-password'], {
-              queryParams: {
-                email: response.email,
-                source: 'workshop-initial-login',
-              },
-            });
-            return;
-          }
-
           this.persistSession(response);
           this.isSubmitting = false;
           await this.router.navigate(['/dashboard']);
         },
         error: (error: HttpErrorResponse) => {
           this.isSubmitting = false;
-          this.submitMessage = error.error?.detail || 'No se pudo iniciar sesión. Inténtalo nuevamente.';
+          const detail = error.error?.detail;
+
+          if (
+            error.status === 403 &&
+            detail &&
+            typeof detail === 'object' &&
+            detail.code === 'WORKSHOP_PASSWORD_CHANGE_REQUIRED'
+          ) {
+            this.submitMessage = '';
+            void this.router.navigate(['/forgot-password'], {
+              queryParams: {
+                email: detail.email || this.form.email.trim().toLowerCase(),
+                source: 'workshop-initial-login',
+              },
+            });
+            return;
+          }
+
+          this.submitMessage =
+            (typeof detail === 'string' ? detail : detail?.message) ||
+            'No se pudo iniciar sesión. Inténtalo nuevamente.';
         },
       });
   }

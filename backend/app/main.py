@@ -22,6 +22,7 @@ from app.db import (
     delete_vehicle,
     delete_workshop_registration,
     delete_technician,
+    delete_technician_for_workshop,
     get_client_by_email,
     get_client_by_id,
     get_vehicle_by_id,
@@ -30,14 +31,17 @@ from app.db import (
     init_database,
     list_clients,
     list_technicians,
+    list_technicians_by_workshop,
     list_vehicles,
     list_workshop_registrations,
     update_client,
     update_client_status,
+    update_technician,
+    update_technician_for_workshop,
     update_vehicle,
     update_workshop_approval_status_with_password,
+    update_workshop_password,
     update_workshop_registration,
-    update_technician,
 )
 
 
@@ -96,13 +100,14 @@ class TechnicianBase(BaseModel):
 
 
 class TechnicianCreate(TechnicianBase):
-    pass
+    workshop_id: int | None = Field(default=None, ge=1)
 
 
 class TechnicianResponse(TechnicianBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    workshop_id: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -179,6 +184,29 @@ class LoginResponse(BaseModel):
     status: str
     access_token: str | None = None
     token_type: str | None = None
+
+
+class WorkshopPasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    email: EmailStr
+    new_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("new_password", "newPassword", "password"),
+    )
+    confirm_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("confirm_password", "confirmPassword"),
+    )
+
+    @model_validator(mode="after")
+    def validate_passwords(self) -> "WorkshopPasswordChangeRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Las contraseñas no coinciden")
+
+        return self
 
 
 class ClientStatusUpdate(BaseModel):
@@ -755,6 +783,16 @@ def login(payload: LoginRequest) -> LoginResponse:
                 detail="Correo o contraseña incorrectos",
             )
 
+        if verify_password(settings.workshop_initial_password, password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "WORKSHOP_PASSWORD_CHANGE_REQUIRED",
+                    "message": "Debes cambiar la contraseña temporal antes de acceder al dashboard",
+                    "email": normalized_email,
+                },
+            )
+
         return LoginResponse(
             id=int(workshop["id"]),
             email=str(workshop["email"]),
@@ -792,13 +830,50 @@ def login(payload: LoginRequest) -> LoginResponse:
     )
 
 
+@app.post(f"{settings.api_prefix}/workshops/change-password")
+def change_workshop_password(payload: WorkshopPasswordChangeRequest) -> dict[str, str]:
+    normalized_email = payload.email.lower().strip()
+    workshop = get_workshop_by_email(normalized_email)
+
+    if not workshop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+    if workshop["approval_status"] != "activo":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El taller todavía no fue habilitado por el administrador",
+        )
+
+    password_hash = workshop.get("password_hash")
+    if not isinstance(password_hash, str) or not verify_password(settings.workshop_initial_password, password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este taller ya no usa la contraseña temporal inicial",
+        )
+
+    updated = update_workshop_password(int(workshop["id"]), hash_password(payload.new_password))
+
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+    return {"message": "La contraseña del taller fue actualizada correctamente"}
+
+
 @app.post(
     f"{settings.api_prefix}/technicians",
     response_model=TechnicianResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def register_technician(payload: TechnicianCreate) -> TechnicianResponse:
-    created = create_technician(payload.model_dump())
+def register_technician(
+    payload: TechnicianCreate,
+    workshop_id: int | None = Query(default=None, ge=1),
+) -> TechnicianResponse:
+    target_workshop_id = workshop_id or payload.workshop_id
+    technician_payload = {
+        **payload.model_dump(),
+        "workshop_id": target_workshop_id,
+    }
+    created = create_technician(technician_payload)
     return TechnicianResponse.model_validate(created)
 
 
@@ -806,8 +881,8 @@ def register_technician(payload: TechnicianCreate) -> TechnicianResponse:
     f"{settings.api_prefix}/technicians",
     response_model=list[TechnicianResponse],
 )
-def get_technicians() -> list[TechnicianResponse]:
-    rows = list_technicians()
+def get_technicians(workshop_id: int | None = Query(default=None, ge=1)) -> list[TechnicianResponse]:
+    rows = list_technicians_by_workshop(workshop_id) if workshop_id else list_technicians()
     return [TechnicianResponse.model_validate(row) for row in rows]
 
 
@@ -815,8 +890,18 @@ def get_technicians() -> list[TechnicianResponse]:
     f"{settings.api_prefix}/technicians/{{technician_id}}",
     response_model=TechnicianResponse,
 )
-def edit_technician(technician_id: int, payload: TechnicianCreate) -> TechnicianResponse:
-    updated = update_technician(technician_id, payload.model_dump())
+def edit_technician(
+    technician_id: int,
+    payload: TechnicianCreate,
+    workshop_id: int | None = Query(default=None, ge=1),
+) -> TechnicianResponse:
+    technician_payload = payload.model_dump()
+    technician_payload["workshop_id"] = workshop_id or payload.workshop_id
+    updated = (
+        update_technician_for_workshop(technician_id, workshop_id, technician_payload)
+        if workshop_id
+        else update_technician(technician_id, technician_payload)
+    )
 
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tecnico no encontrado")
@@ -828,8 +913,12 @@ def edit_technician(technician_id: int, payload: TechnicianCreate) -> Technician
     f"{settings.api_prefix}/technicians/{{technician_id}}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def remove_technician(technician_id: int) -> None:
-    deleted = delete_technician(technician_id)
+def remove_technician(technician_id: int, workshop_id: int | None = Query(default=None, ge=1)) -> None:
+    deleted = (
+        delete_technician_for_workshop(technician_id, workshop_id)
+        if workshop_id
+        else delete_technician(technician_id)
+    )
 
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tecnico no encontrado")

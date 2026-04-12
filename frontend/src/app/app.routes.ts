@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 
+import { authGuard } from './auth.guard';
 import { DashboardPageComponent } from './pages/dashboard-page.component';
 import { ForgotPasswordPageComponent } from './pages/forgot-password-page.component';
 import { HomePageComponent } from './pages/home-page.component';
@@ -59,6 +60,7 @@ export const appRoutes: Routes = [
   {
     path: 'dashboard',
     component: DashboardPageComponent,
+    canActivate: [authGuard],
     title: 'Dashboard | Taller ACB Asistencia',
   },
   {

@@ -37,6 +37,7 @@ CREATE_TECHNICIANS_TABLE_SQL = text(
     """
     CREATE TABLE IF NOT EXISTS technicians (
         id BIGSERIAL PRIMARY KEY,
+        workshop_id BIGINT REFERENCES workshop_registrations(id) ON DELETE CASCADE,
         full_name VARCHAR(160) NOT NULL,
         phone VARCHAR(40) NOT NULL,
         email VARCHAR(160) NOT NULL DEFAULT '',
@@ -214,6 +215,30 @@ UPDATE_WORKSHOP_APPROVAL_STATUS_SQL = text(
     """
 )
 
+UPDATE_WORKSHOP_PASSWORD_SQL = text(
+    """
+    UPDATE workshop_registrations
+    SET
+        password_hash = :password_hash
+    WHERE id = :id
+    RETURNING
+        id,
+        workshop_name,
+        contact_name,
+        phone,
+        email,
+        zone,
+        specialty,
+        approval_status,
+        password_hash,
+        latitude,
+        longitude,
+        timezone,
+        utc_offset_minutes,
+        created_at
+    """
+)
+
 GET_WORKSHOP_BY_EMAIL_SQL = text(
     """
     SELECT
@@ -271,6 +296,7 @@ DELETE_WORKSHOP_SQL = text(
 INSERT_TECHNICIAN_SQL = text(
     """
     INSERT INTO technicians (
+        workshop_id,
         full_name,
         phone,
         email,
@@ -278,6 +304,7 @@ INSERT_TECHNICIAN_SQL = text(
         status
     )
     VALUES (
+        :workshop_id,
         :full_name,
         :phone,
         :email,
@@ -286,6 +313,7 @@ INSERT_TECHNICIAN_SQL = text(
     )
     RETURNING
         id,
+        workshop_id,
         full_name,
         phone,
         email,
@@ -300,6 +328,7 @@ LIST_TECHNICIANS_SQL = text(
     """
     SELECT
         id,
+        workshop_id,
         full_name,
         phone,
         email,
@@ -312,10 +341,29 @@ LIST_TECHNICIANS_SQL = text(
     """
 )
 
+LIST_TECHNICIANS_BY_WORKSHOP_SQL = text(
+    """
+    SELECT
+        id,
+        workshop_id,
+        full_name,
+        phone,
+        email,
+        specialty,
+        status,
+        created_at,
+        updated_at
+    FROM technicians
+    WHERE workshop_id = :workshop_id
+    ORDER BY updated_at DESC, id DESC
+    """
+)
+
 UPDATE_TECHNICIAN_SQL = text(
     """
     UPDATE technicians
     SET
+        workshop_id = COALESCE(:workshop_id, workshop_id),
         full_name = :full_name,
         phone = :phone,
         email = :email,
@@ -325,6 +373,31 @@ UPDATE_TECHNICIAN_SQL = text(
     WHERE id = :id
     RETURNING
         id,
+        workshop_id,
+        full_name,
+        phone,
+        email,
+        specialty,
+        status,
+        created_at,
+        updated_at
+    """
+)
+
+UPDATE_TECHNICIAN_BY_WORKSHOP_SQL = text(
+    """
+    UPDATE technicians
+    SET
+        full_name = :full_name,
+        phone = :phone,
+        email = :email,
+        specialty = :specialty,
+        status = :status,
+        updated_at = NOW()
+    WHERE id = :id AND workshop_id = :workshop_id
+    RETURNING
+        id,
+        workshop_id,
         full_name,
         phone,
         email,
@@ -339,6 +412,14 @@ DELETE_TECHNICIAN_SQL = text(
     """
     DELETE FROM technicians
     WHERE id = :id
+    RETURNING id
+    """
+)
+
+DELETE_TECHNICIAN_BY_WORKSHOP_SQL = text(
+    """
+    DELETE FROM technicians
+    WHERE id = :id AND workshop_id = :workshop_id
     RETURNING id
     """
 )
@@ -630,7 +711,28 @@ def init_database() -> None:
         connection.execute(CREATE_TECHNICIANS_TABLE_SQL)
         connection.execute(CREATE_CLIENTS_TABLE_SQL)
         connection.execute(CREATE_VEHICLES_TABLE_SQL)
+        connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS workshop_id BIGINT"))
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS email VARCHAR(160)"))
+        connection.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'technicians_workshop_id_fkey'
+                    ) THEN
+                        ALTER TABLE technicians
+                        ADD CONSTRAINT technicians_workshop_id_fkey
+                        FOREIGN KEY (workshop_id)
+                        REFERENCES workshop_registrations(id)
+                        ON DELETE CASCADE;
+                    END IF;
+                END $$;
+                """
+            )
+        )
         connection.execute(
             text("ALTER TABLE workshop_registrations ADD COLUMN IF NOT EXISTS timezone VARCHAR(120)")
         )
@@ -753,6 +855,19 @@ def update_workshop_approval_status_with_password(
     return dict(row) if row else None
 
 
+def update_workshop_password(workshop_id: int, password_hash: str) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            UPDATE_WORKSHOP_PASSWORD_SQL,
+            {
+                "id": workshop_id,
+                "password_hash": password_hash,
+            },
+        )
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
 def delete_workshop_registration(workshop_id: int) -> bool:
     with engine.begin() as connection:
         result = connection.execute(DELETE_WORKSHOP_SQL, {"id": workshop_id})
@@ -774,6 +889,13 @@ def list_technicians() -> list[dict[str, object]]:
     return [dict(row) for row in rows]
 
 
+def list_technicians_by_workshop(workshop_id: int) -> list[dict[str, object]]:
+    with engine.connect() as connection:
+        result = connection.execute(LIST_TECHNICIANS_BY_WORKSHOP_SQL, {"workshop_id": workshop_id})
+        rows = result.mappings().all()
+    return [dict(row) for row in rows]
+
+
 def update_technician(technician_id: int, payload: Mapping[str, object]) -> dict[str, object] | None:
     with engine.begin() as connection:
         result = connection.execute(UPDATE_TECHNICIAN_SQL, {"id": technician_id, **payload})
@@ -781,9 +903,33 @@ def update_technician(technician_id: int, payload: Mapping[str, object]) -> dict
     return dict(row) if row else None
 
 
+def update_technician_for_workshop(
+    technician_id: int,
+    workshop_id: int,
+    payload: Mapping[str, object],
+) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            UPDATE_TECHNICIAN_BY_WORKSHOP_SQL,
+            {"id": technician_id, "workshop_id": workshop_id, **payload},
+        )
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
 def delete_technician(technician_id: int) -> bool:
     with engine.begin() as connection:
         result = connection.execute(DELETE_TECHNICIAN_SQL, {"id": technician_id})
+        row = result.mappings().one_or_none()
+    return row is not None
+
+
+def delete_technician_for_workshop(technician_id: int, workshop_id: int) -> bool:
+    with engine.begin() as connection:
+        result = connection.execute(
+            DELETE_TECHNICIAN_BY_WORKSHOP_SQL,
+            {"id": technician_id, "workshop_id": workshop_id},
+        )
         row = result.mappings().one_or_none()
     return row is not None
 

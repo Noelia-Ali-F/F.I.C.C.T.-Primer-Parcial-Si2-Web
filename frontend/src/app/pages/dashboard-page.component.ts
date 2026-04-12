@@ -43,6 +43,7 @@ type WorkshopRegistration = {
 
 type Technician = {
   id: number;
+  workshop_id: number | null;
   full_name: string;
   phone: string;
   email: string;
@@ -272,14 +273,14 @@ type AdminSession = {
               🔔
             </button>
 
-            <a
+            <button
               class="dashboard-topbar-icon dashboard-topbar-logout"
-              routerLink="/login"
+              type="button"
               aria-label="Cerrar sesion"
               (click)="logout()"
             >
               ⎋
-            </a>
+            </button>
           </div>
         </header>
 
@@ -1028,6 +1029,14 @@ export class DashboardPageComponent {
     return this.adminSession?.fullName?.trim() || 'Administrador';
   }
 
+  get isWorkshopSession(): boolean {
+    return this.adminSession?.role === 'workshop';
+  }
+
+  get currentWorkshopId(): number | null {
+    return this.isWorkshopSession ? this.adminSession?.id ?? null : null;
+  }
+
   get userInitials(): string {
     const parts = this.userDisplayName
       .split(' ')
@@ -1142,6 +1151,12 @@ export class DashboardPageComponent {
   }
 
   logout(): void {
+    const confirmed = window.confirm('¿Quieres cerrar sesión?');
+
+    if (!confirmed) {
+      return;
+    }
+
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(this.appSessionStorageKey);
       window.sessionStorage.removeItem(this.appSessionStorageKey);
@@ -1236,6 +1251,7 @@ export class DashboardPageComponent {
 
   submitTechnician(): void {
     const payload = {
+      workshop_id: this.currentWorkshopId,
       full_name: this.technicianForm.full_name.trim(),
       phone: this.technicianForm.phone.trim(),
       email: this.technicianForm.email.trim(),
@@ -1252,35 +1268,43 @@ export class DashboardPageComponent {
     this.technicianFeedback = '';
 
     if (this.editingTechnicianId) {
-      this.http.put<Technician>(`${this.techniciansApiUrl}/${this.editingTechnicianId}`, payload).subscribe({
+      this.http
+        .put<Technician>(`${this.techniciansApiUrl}/${this.editingTechnicianId}`, payload, {
+          params: this.currentWorkshopId ? { workshop_id: this.currentWorkshopId } : {},
+        })
+        .subscribe({
+          next: () => {
+            this.isSavingTechnician = false;
+            this.technicianFeedback = 'Tecnico actualizado correctamente.';
+            this.resetTechnicianForm();
+            this.showTechnicianForm = false;
+            this.loadTechnicians();
+          },
+          error: () => {
+            this.isSavingTechnician = false;
+            this.technicianFeedback = 'No se pudo actualizar el tecnico.';
+          },
+        });
+      return;
+    }
+
+    this.http
+      .post<Technician>(this.techniciansApiUrl, payload, {
+        params: this.currentWorkshopId ? { workshop_id: this.currentWorkshopId } : {},
+      })
+      .subscribe({
         next: () => {
           this.isSavingTechnician = false;
-          this.technicianFeedback = 'Tecnico actualizado correctamente.';
+          this.technicianFeedback = 'Tecnico registrado correctamente.';
           this.resetTechnicianForm();
           this.showTechnicianForm = false;
           this.loadTechnicians();
         },
         error: () => {
           this.isSavingTechnician = false;
-          this.technicianFeedback = 'No se pudo actualizar el tecnico.';
+          this.technicianFeedback = 'No se pudo registrar el tecnico.';
         },
       });
-      return;
-    }
-
-    this.http.post<Technician>(this.techniciansApiUrl, payload).subscribe({
-      next: () => {
-        this.isSavingTechnician = false;
-        this.technicianFeedback = 'Tecnico registrado correctamente.';
-        this.resetTechnicianForm();
-        this.showTechnicianForm = false;
-        this.loadTechnicians();
-      },
-      error: () => {
-        this.isSavingTechnician = false;
-        this.technicianFeedback = 'No se pudo registrar el tecnico.';
-      },
-    });
   }
 
   deleteTechnician(technician: Technician): void {
@@ -1290,15 +1314,19 @@ export class DashboardPageComponent {
       return;
     }
 
-    this.http.delete(`${this.techniciansApiUrl}/${technician.id}`).subscribe({
-      next: () => {
-        this.technicianFeedback = 'Tecnico eliminado correctamente.';
-        this.loadTechnicians();
-      },
-      error: () => {
-        this.technicianFeedback = 'No se pudo eliminar el tecnico.';
-      },
-    });
+    this.http
+      .delete(`${this.techniciansApiUrl}/${technician.id}`, {
+        params: this.currentWorkshopId ? { workshop_id: this.currentWorkshopId } : {},
+      })
+      .subscribe({
+        next: () => {
+          this.technicianFeedback = 'Tecnico eliminado correctamente.';
+          this.loadTechnicians();
+        },
+        error: () => {
+          this.technicianFeedback = 'No se pudo eliminar el tecnico.';
+        },
+      });
   }
 
   toggleTechnicianStatus(technician: Technician): void {
@@ -1311,11 +1339,14 @@ export class DashboardPageComponent {
 
     this.http
       .put<Technician>(`${this.techniciansApiUrl}/${technician.id}`, {
+        workshop_id: technician.workshop_id ?? this.currentWorkshopId,
         full_name: technician.full_name,
         phone: technician.phone,
         email: technician.email,
         specialty: technician.specialty,
         status: nextStatus,
+      }, {
+        params: this.currentWorkshopId ? { workshop_id: this.currentWorkshopId } : {},
       })
       .subscribe({
         next: () => {
@@ -1462,18 +1493,22 @@ export class DashboardPageComponent {
   loadTechnicians(): void {
     this.isTechniciansLoading = true;
 
-    this.http.get<Technician[]>(this.techniciansApiUrl).subscribe({
-      next: (technicians) => {
-        this.technicians = technicians;
-        this.isTechniciansLoading = false;
-        this.refreshStats();
-      },
-      error: () => {
-        this.technicians = [];
-        this.isTechniciansLoading = false;
-        this.refreshStats();
-      },
-    });
+    this.http
+      .get<Technician[]>(this.techniciansApiUrl, {
+        params: this.currentWorkshopId ? { workshop_id: this.currentWorkshopId } : {},
+      })
+      .subscribe({
+        next: (technicians) => {
+          this.technicians = technicians;
+          this.isTechniciansLoading = false;
+          this.refreshStats();
+        },
+        error: () => {
+          this.technicians = [];
+          this.isTechniciansLoading = false;
+          this.refreshStats();
+        },
+      });
   }
 
   loadClients(): void {

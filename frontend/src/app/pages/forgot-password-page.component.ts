@@ -1,7 +1,8 @@
 import { CommonModule } from '@angular/common';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Component, inject } from '@angular/core';
 import { FormsModule, NgForm } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 
 import { ValidationDialogComponent } from './validation-dialog.component';
@@ -22,7 +23,7 @@ import { ValidationDialogComponent } from './validation-dialog.component';
             <span class="forgot-password-eyebrow">Soporte de acceso</span>
             <h1>¿Olvidaste tu contraseña?</h1>
             <p class="forgot-password-copy">
-              Ingresa tu correo electrónico y te enviaremos instrucciones para recuperar el acceso.
+              Ingresa tu correo electrónico y registra una nueva contraseña para recuperar el acceso.
             </p>
 
             <p class="login-clean-feedback" *ngIf="showWorkshopResetMessage">
@@ -42,10 +43,54 @@ import { ValidationDialogComponent } from './validation-dialog.component';
                 />
               </label>
 
+              <label class="form-field">
+                <span>Nueva contraseña</span>
+                <span class="password-field">
+                  <input
+                    [type]="showNewPassword ? 'text' : 'password'"
+                    name="newPassword"
+                    [(ngModel)]="newPassword"
+                    required
+                    minlength="6"
+                    placeholder="Ingresa tu nueva contraseña"
+                  />
+                  <button
+                    class="password-toggle"
+                    type="button"
+                    (click)="showNewPassword = !showNewPassword"
+                    [attr.aria-label]="showNewPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                  >
+                    {{ showNewPassword ? '🙈' : '👁' }}
+                  </button>
+                </span>
+              </label>
+
+              <label class="form-field">
+                <span>Confirmar nueva contraseña</span>
+                <span class="password-field">
+                  <input
+                    [type]="showConfirmPassword ? 'text' : 'password'"
+                    name="confirmPassword"
+                    [(ngModel)]="confirmPassword"
+                    required
+                    minlength="6"
+                    placeholder="Confirma tu nueva contraseña"
+                  />
+                  <button
+                    class="password-toggle"
+                    type="button"
+                    (click)="showConfirmPassword = !showConfirmPassword"
+                    [attr.aria-label]="showConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                  >
+                    {{ showConfirmPassword ? '🙈' : '👁' }}
+                  </button>
+                </span>
+              </label>
+
               <p class="login-clean-feedback" *ngIf="submitMessage">{{ submitMessage }}</p>
 
               <button class="button primary login-clean-submit" type="submit">
-                Enviar instrucciones
+                Cambiar contraseña
               </button>
 
               <a class="login-clean-option forgot-password-back" routerLink="/login">
@@ -61,12 +106,20 @@ import { ValidationDialogComponent } from './validation-dialog.component';
 })
 export class ForgotPasswordPageComponent {
   private readonly dialog = inject(MatDialog);
+  private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  private readonly changePasswordApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops/change-password`;
 
   email = '';
+  newPassword = '';
+  confirmPassword = '';
+  showNewPassword = false;
+  showConfirmPassword = false;
   submitMessage = '';
   showWorkshopResetMessage = false;
+  isSubmitting = false;
 
   constructor() {
     this.route.queryParamMap.subscribe((params) => {
@@ -76,6 +129,10 @@ export class ForgotPasswordPageComponent {
   }
 
   submitRecovery(recoveryForm: NgForm): void {
+    if (this.isSubmitting) {
+      return;
+    }
+
     const missingFields: string[] = [];
     const normalizedEmail = this.email.trim();
 
@@ -85,8 +142,20 @@ export class ForgotPasswordPageComponent {
       missingFields.push('Correo Electrónico válido');
     }
 
+    if (!this.newPassword.trim()) {
+      missingFields.push('Nueva Contraseña');
+    } else if (this.newPassword.trim().length < 6) {
+      missingFields.push('Nueva Contraseña de al menos 6 caracteres');
+    }
+
+    if (!this.confirmPassword.trim()) {
+      missingFields.push('Confirmar Nueva Contraseña');
+    } else if (this.newPassword !== this.confirmPassword) {
+      missingFields.push('Confirmación de contraseña válida');
+    }
+
     if (missingFields.length > 0 || recoveryForm.invalid) {
-      this.submitMessage = 'Completa un correo electrónico válido para continuar.';
+      this.submitMessage = 'Completa correctamente el correo y las contraseñas para continuar.';
       this.dialog.open(ValidationDialogComponent, {
         width: '26rem',
         maxWidth: 'calc(100vw - 2rem)',
@@ -95,10 +164,30 @@ export class ForgotPasswordPageComponent {
       return;
     }
 
-    this.submitMessage =
-      'Te enviamos instrucciones de recuperación al correo registrado si existe en el sistema.';
-    recoveryForm.resetForm({
-      email: this.email,
-    });
+    this.isSubmitting = true;
+    this.submitMessage = '';
+
+    this.http
+      .post<{ message: string }>(this.changePasswordApiUrl, {
+        email: normalizedEmail.toLowerCase(),
+        newPassword: this.newPassword.trim(),
+        confirmPassword: this.confirmPassword.trim(),
+      })
+      .subscribe({
+        next: async (response) => {
+          this.isSubmitting = false;
+          this.submitMessage = response.message;
+          recoveryForm.resetForm({
+            email: normalizedEmail,
+            newPassword: '',
+            confirmPassword: '',
+          });
+          await this.router.navigate(['/login']);
+        },
+        error: (error: HttpErrorResponse) => {
+          this.isSubmitting = false;
+          this.submitMessage = error.error?.detail || 'No se pudo actualizar la contraseña.';
+        },
+      });
   }
 }
