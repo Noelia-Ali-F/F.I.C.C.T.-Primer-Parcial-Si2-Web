@@ -4,8 +4,13 @@ Documentacion breve de los endpoints disponibles en el backend FastAPI.
 
 ## Base URL
 
-- Desarrollo local: `http://localhost:8000`
+- Desarrollo con Docker Compose: `http://localhost:8000`
 - En red local: `http://192.168.0.50:8000` o `http://192.168.26.4:8000`
+
+Nota:
+
+- El backend de este proyecto corre dentro de Docker.
+- El host `db` de PostgreSQL esta pensado para resolverse desde la red interna de Docker Compose.
 
 ## Endpoints
 
@@ -257,6 +262,95 @@ curl -X POST http://localhost:8000/api/auth/login \
 ```
 
 ### `POST /api/workshops`
+
+### `POST /api/emergencias`
+
+Registra una solicitud de emergencia enviada desde la app movil usando `multipart/form-data`.
+
+#### Campos `form-data`
+
+- `client_id`: opcional, entero mayor a 0
+- `vehicle_name`: nombre mostrado del vehiculo
+- `vehicle_plate`: placa del vehiculo
+- `problem_type`: tipo de problema o emergencia
+- `description`: opcional, descripcion detallada
+- `latitude`: opcional
+- `longitude`: opcional
+- `address`: opcional
+- `zone`: opcional
+- `audio_duration_seconds`: opcional
+- `photos`: opcional, archivo repetido 0..n veces
+- `audio`: opcional, archivo unico
+
+#### Nombres de campos aceptados para archivos
+
+- Fotos: `photos`
+- Audio: `audio`
+
+#### Tipos de archivo aceptados
+
+- Fotos: `jpg`, `jpeg`, `png`, `webp`
+- Audio: `aac`, `m4a`, `mp3`, `wav`, `ogg`, `webm`
+
+#### Limites actuales
+
+- Fotos: maximo `6` archivos por solicitud
+- Tamano maximo por foto: `20 MB`
+- Audio: maximo `1` archivo
+- Tamano maximo del audio: `40 MB`
+
+#### Respuesta exitosa
+
+Codigo: `201 Created`
+
+```json
+{
+  "id": 1,
+  "client_id": 4,
+  "vehicle_name": "Toyota Corolla",
+  "vehicle_plate": "1234ABC",
+  "problem_type": "pinchazo",
+  "description": "La llanta delantera se vacio en plena avenida",
+  "latitude": -17.7833,
+  "longitude": -63.1821,
+  "address": "Av. Banzer y 4to anillo",
+  "zone": "Norte",
+  "audio_duration_seconds": 12.4,
+  "photo_paths": [
+    "emergencias/photos/archivo1.jpg"
+  ],
+  "photo_urls": [
+    "/uploads/emergencias/photos/archivo1.jpg"
+  ],
+  "audio_path": "emergencias/audio/audio1.m4a",
+  "audio_url": "/uploads/emergencias/audio/audio1.m4a",
+  "created_at": "2026-04-12T12:00:00.000000Z"
+}
+```
+
+#### Errores posibles
+
+- `400 Bad Request`: archivo de foto o audio invalido
+- `404 Not Found`: `client_id` no existe
+- `503 Service Unavailable`: base de datos no disponible
+
+Ejemplo:
+
+```bash
+curl -X POST http://localhost:8000/api/emergencias \
+  -F "client_id=4" \
+  -F "vehicle_name=Toyota Corolla" \
+  -F "vehicle_plate=1234ABC" \
+  -F "problem_type=pinchazo" \
+  -F "latitude=-17.7833" \
+  -F "longitude=-63.1821" \
+  -F "address=Av. Banzer y 4to anillo" \
+  -F "zone=Norte" \
+  -F "audio_duration_seconds=12.4" \
+  -F "photos=@foto1.jpg" \
+  -F "photos=@foto2.jpg" \
+  -F "audio=@nota.m4a"
+```
 
 Registra un taller mecanico desde el formulario principal del frontend.
 

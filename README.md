@@ -2,6 +2,14 @@
 
 Estructura base del proyecto web para el primer parcial de SI2.
 
+## Flujo Soportado
+
+Este proyecto se ejecuta usando Docker Compose.
+
+- Backend, frontend y PostgreSQL estan pensados para correr dentro de contenedores.
+- No se requiere crear entornos virtuales locales ni instalar dependencias manualmente en la maquina host.
+- Si existen carpetas locales como `.venv`, `node_modules` o `dist`, se consideran artefactos temporales y no forman parte del flujo oficial.
+
 ## Estructura
 
 - `frontend`: aplicacion Angular para desarrollo web
@@ -13,7 +21,7 @@ Estructura base del proyecto web para el primer parcial de SI2.
 
 1. Copiar `.env.example` a `.env`
 2. Copiar `backend/.env.example` a `backend/.env`
-3. Ejecutar `docker compose up --build`
+3. Ejecutar `docker-compose up --build`
 
 ## Puertos
 

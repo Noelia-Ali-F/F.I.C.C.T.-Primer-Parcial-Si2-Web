@@ -85,6 +85,29 @@ CREATE_VEHICLES_TABLE_SQL = text(
     """
 )
 
+CREATE_EMERGENCY_REPORTS_TABLE_SQL = text(
+    """
+    CREATE TABLE IF NOT EXISTS emergency_reports (
+        id BIGSERIAL PRIMARY KEY,
+        client_id BIGINT REFERENCES clients(id) ON DELETE SET NULL,
+        vehicle_name VARCHAR(160) NOT NULL,
+        vehicle_plate VARCHAR(40) NOT NULL,
+        problem_type VARCHAR(120) NOT NULL,
+        description TEXT,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        address VARCHAR(255),
+        zone VARCHAR(120),
+        audio_duration_seconds DOUBLE PRECISION,
+        photo_paths TEXT NOT NULL DEFAULT '[]',
+        photo_urls TEXT NOT NULL DEFAULT '[]',
+        audio_path VARCHAR(255),
+        audio_url VARCHAR(255),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """
+)
+
 INSERT_WORKSHOP_SQL = text(
     """
     INSERT INTO workshop_registrations (
@@ -698,6 +721,60 @@ DELETE_VEHICLE_SQL = text(
     """
 )
 
+INSERT_EMERGENCY_REPORT_SQL = text(
+    """
+    INSERT INTO emergency_reports (
+        client_id,
+        vehicle_name,
+        vehicle_plate,
+        problem_type,
+        description,
+        latitude,
+        longitude,
+        address,
+        zone,
+        audio_duration_seconds,
+        photo_paths,
+        photo_urls,
+        audio_path,
+        audio_url
+    )
+    VALUES (
+        :client_id,
+        :vehicle_name,
+        :vehicle_plate,
+        :problem_type,
+        :description,
+        :latitude,
+        :longitude,
+        :address,
+        :zone,
+        :audio_duration_seconds,
+        :photo_paths,
+        :photo_urls,
+        :audio_path,
+        :audio_url
+    )
+    RETURNING
+        id,
+        client_id,
+        vehicle_name,
+        vehicle_plate,
+        problem_type,
+        description,
+        latitude,
+        longitude,
+        address,
+        zone,
+        audio_duration_seconds,
+        photo_paths,
+        photo_urls,
+        audio_path,
+        audio_url,
+        created_at
+    """
+)
+
 
 def check_database_connection() -> bool:
     with engine.connect() as connection:
@@ -711,6 +788,7 @@ def init_database() -> None:
         connection.execute(CREATE_TECHNICIANS_TABLE_SQL)
         connection.execute(CREATE_CLIENTS_TABLE_SQL)
         connection.execute(CREATE_VEHICLES_TABLE_SQL)
+        connection.execute(CREATE_EMERGENCY_REPORTS_TABLE_SQL)
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS workshop_id BIGINT"))
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS email VARCHAR(160)"))
         connection.execute(
@@ -786,6 +864,47 @@ def init_database() -> None:
         )
         connection.execute(text("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS photo_path VARCHAR(255)"))
         connection.execute(text("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS photo_url VARCHAR(255)"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS client_id BIGINT"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS vehicle_name VARCHAR(160)"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS vehicle_plate VARCHAR(40)"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS problem_type VARCHAR(120)"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS description TEXT"))
+        connection.execute(text("ALTER TABLE emergency_reports ALTER COLUMN description DROP NOT NULL"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS address VARCHAR(255)"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS zone VARCHAR(120)"))
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_duration_seconds DOUBLE PRECISION")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS photo_paths TEXT NOT NULL DEFAULT '[]'")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS photo_urls TEXT NOT NULL DEFAULT '[]'")
+        )
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_path VARCHAR(255)"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_url VARCHAR(255)"))
+        connection.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'emergency_reports_client_id_fkey'
+                    ) THEN
+                        ALTER TABLE emergency_reports
+                        ADD CONSTRAINT emergency_reports_client_id_fkey
+                        FOREIGN KEY (client_id)
+                        REFERENCES clients(id)
+                        ON DELETE SET NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
 
 
 def create_workshop_registration(payload: Mapping[str, object]) -> dict[str, object]:
@@ -1017,3 +1136,10 @@ def delete_vehicle(vehicle_id: int, client_id: int) -> dict[str, object] | None:
         result = connection.execute(DELETE_VEHICLE_SQL, {"id": vehicle_id, "client_id": client_id})
         row = result.mappings().one_or_none()
     return dict(row) if row else None
+
+
+def create_emergency_report(payload: Mapping[str, object]) -> dict[str, object]:
+    with engine.begin() as connection:
+        result = connection.execute(INSERT_EMERGENCY_REPORT_SQL, payload)
+        row = result.mappings().one()
+    return dict(row)

@@ -1,5 +1,6 @@
 from datetime import datetime
 import hashlib
+import json
 import logging
 from pathlib import Path
 import secrets
@@ -15,6 +16,7 @@ from app.config import settings
 from app.db import (
     check_database_connection,
     create_client,
+    create_emergency_report,
     create_technician,
     create_vehicle,
     create_workshop_registration,
@@ -47,13 +49,25 @@ from app.db import (
 
 UPLOADS_ROOT = Path(settings.uploads_dir)
 VEHICLE_UPLOADS_DIR = UPLOADS_ROOT / "vehicles"
+EMERGENCY_UPLOADS_DIR = UPLOADS_ROOT / "emergencias"
+EMERGENCY_PHOTOS_DIR = EMERGENCY_UPLOADS_DIR / "photos"
+EMERGENCY_AUDIO_DIR = EMERGENCY_UPLOADS_DIR / "audio"
 UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
 VEHICLE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+EMERGENCY_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+EMERGENCY_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 logger = logging.getLogger(__name__)
 PROTECTED_ADMIN_EMAIL = settings.protected_admin_email.lower().strip()
 PROTECTED_ADMIN_ROLE = "admin"
 PROTECTED_ADMIN_ID = 0
 WORKSHOP_ROLE = "workshop"
+
+# Limites y formatos aceptados para el flujo de emergencias.
+MAX_EMERGENCY_PHOTOS = 6
+MAX_EMERGENCY_PHOTO_BYTES = 20 * 1024 * 1024
+MAX_EMERGENCY_AUDIO_BYTES = 40 * 1024 * 1024
+ALLOWED_PHOTO_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+ALLOWED_AUDIO_SUFFIXES = {".aac", ".m4a", ".mp3", ".wav", ".ogg", ".webm"}
 
 
 class WorkshopRegistrationCreate(BaseModel):
@@ -240,6 +254,27 @@ class VehicleResponse(BaseModel):
     created_at: datetime
 
 
+class EmergencyReportResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_id: int | None = None
+    vehicle_name: str
+    vehicle_plate: str
+    problem_type: str
+    description: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    address: str | None = None
+    zone: str | None = None
+    audio_duration_seconds: float | None = None
+    photo_paths: list[str] = Field(default_factory=list)
+    photo_urls: list[str] = Field(default_factory=list)
+    audio_path: str | None = None
+    audio_url: str | None = None
+    created_at: datetime
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
@@ -265,6 +300,14 @@ def normalize_plate(plate: str) -> str:
     return plate.strip().upper()
 
 
+def normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = value.strip()
+    return normalized or None
+
+
 def is_protected_admin_email(email: str) -> bool:
     return email.lower().strip() == PROTECTED_ADMIN_EMAIL
 
@@ -286,28 +329,91 @@ def ensure_client_exists(client_id: int) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
 
 
+def build_public_upload_url(relative_path: str) -> str:
+    return f"/uploads/{relative_path}"
+
+
+def remove_file_if_exists(path: Path) -> None:
+    if path.is_file():
+        path.unlink()
+
+
+def save_upload_with_limit(
+    upload: UploadFile,
+    *,
+    destination_dir: Path,
+    relative_dir: str,
+    allowed_suffixes: set[str],
+    max_bytes: int | None,
+    invalid_type_detail: str,
+    too_large_detail: str | None = None,
+) -> tuple[str, str]:
+    suffix = Path(upload.filename or "").suffix.lower()
+
+    if suffix not in allowed_suffixes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=invalid_type_detail)
+
+    filename = f"{uuid4().hex}{suffix}"
+    relative_path = f"{relative_dir}/{filename}"
+    absolute_path = destination_dir / filename
+    bytes_written = 0
+
+    with absolute_path.open("wb") as buffer:
+        while chunk := upload.file.read(1024 * 1024):
+            bytes_written += len(chunk)
+            if max_bytes is not None and bytes_written > max_bytes:
+                buffer.close()
+                remove_file_if_exists(absolute_path)
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=too_large_detail)
+            buffer.write(chunk)
+
+    return relative_path, build_public_upload_url(relative_path)
+
+
+def cleanup_uploaded_files(*relative_paths: str | None) -> None:
+    for relative_path in relative_paths:
+        remove_uploaded_file(relative_path)
+
+
 def save_vehicle_photo(photo: UploadFile | None) -> tuple[str | None, str | None]:
     if photo is None or not photo.filename:
         return None, None
 
-    suffix = Path(photo.filename).suffix.lower()
-    allowed_suffixes = {".jpg", ".jpeg", ".png", ".webp"}
+    return save_upload_with_limit(
+        photo,
+        destination_dir=VEHICLE_UPLOADS_DIR,
+        relative_dir="vehicles",
+        allowed_suffixes=ALLOWED_PHOTO_SUFFIXES,
+        max_bytes=None,
+        invalid_type_detail="La foto debe ser JPG, JPEG, PNG o WEBP",
+    )
 
-    if suffix not in allowed_suffixes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La foto debe ser JPG, JPEG, PNG o WEBP",
-        )
 
-    filename = f"{uuid4().hex}{suffix}"
-    relative_path = f"vehicles/{filename}"
-    absolute_path = VEHICLE_UPLOADS_DIR / filename
+def save_emergency_photo(photo: UploadFile) -> tuple[str, str]:
+    return save_upload_with_limit(
+        photo,
+        destination_dir=EMERGENCY_PHOTOS_DIR,
+        relative_dir="emergencias/photos",
+        allowed_suffixes=ALLOWED_PHOTO_SUFFIXES,
+        max_bytes=MAX_EMERGENCY_PHOTO_BYTES,
+        invalid_type_detail="Cada foto debe ser JPG, JPEG, PNG o WEBP",
+        too_large_detail="Cada foto puede pesar como maximo 20 MB",
+    )
 
-    with absolute_path.open("wb") as buffer:
-        while chunk := photo.file.read(1024 * 1024):
-            buffer.write(chunk)
 
-    return relative_path, f"/uploads/{relative_path}"
+def save_emergency_audio(audio: UploadFile | None) -> tuple[str | None, str | None]:
+    if audio is None or not audio.filename:
+        return None, None
+
+    return save_upload_with_limit(
+        audio,
+        destination_dir=EMERGENCY_AUDIO_DIR,
+        relative_dir="emergencias/audio",
+        allowed_suffixes=ALLOWED_AUDIO_SUFFIXES,
+        max_bytes=MAX_EMERGENCY_AUDIO_BYTES,
+        invalid_type_detail="El audio debe ser AAC, M4A, MP3, WAV, OGG o WEBM",
+        too_large_detail="El audio puede pesar como maximo 40 MB",
+    )
 
 
 def remove_vehicle_photo(photo_path: str | None) -> None:
@@ -321,8 +427,37 @@ def remove_vehicle_photo(photo_path: str | None) -> None:
     except ValueError:
         return
 
-    if candidate.is_file():
-        candidate.unlink()
+    remove_file_if_exists(candidate)
+
+
+def remove_uploaded_file(relative_path: str | None) -> None:
+    if not relative_path:
+        return
+
+    candidate = (UPLOADS_ROOT / relative_path).resolve()
+
+    try:
+        candidate.relative_to(UPLOADS_ROOT.resolve())
+    except ValueError:
+        return
+
+    remove_file_if_exists(candidate)
+
+
+def parse_json_string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+
+        if isinstance(decoded, list):
+            return [str(item) for item in decoded]
+
+    return []
 
 
 app = FastAPI(
@@ -438,6 +573,83 @@ def register_vehicle(
         ) from exc
 
     return VehicleResponse.model_validate(created)
+
+
+@app.post(
+    f"{settings.api_prefix}/emergencias",
+    response_model=EmergencyReportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_emergency(
+    client_id: int | None = Form(default=None, ge=1),
+    vehicle_name: str = Form(min_length=1, max_length=160),
+    vehicle_plate: str = Form(min_length=3, max_length=40),
+    problem_type: str = Form(min_length=2, max_length=120),
+    description: str | None = Form(default=None, min_length=3, max_length=4000),
+    latitude: float | None = Form(default=None, ge=-90, le=90),
+    longitude: float | None = Form(default=None, ge=-180, le=180),
+    address: str | None = Form(default=None, max_length=255),
+    zone: str | None = Form(default=None, max_length=120),
+    audio_duration_seconds: float | None = Form(default=None, ge=0),
+    photos: list[UploadFile] = File(default=[]),
+    audio: UploadFile | None = File(default=None),
+) -> EmergencyReportResponse:
+    if client_id is not None:
+        ensure_client_exists(client_id)
+
+    # FastAPI entrega todos los campos `photos`; filtramos entradas vacias para
+    # mantener el contrato flexible con clientes moviles.
+    valid_photos = [photo for photo in photos if photo.filename]
+
+    if len(valid_photos) > MAX_EMERGENCY_PHOTOS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Se permiten como maximo {MAX_EMERGENCY_PHOTOS} fotos por emergencia",
+        )
+
+    photo_paths: list[str] = []
+    photo_urls: list[str] = []
+    audio_path: str | None = None
+
+    try:
+        for photo in valid_photos:
+            relative_path, public_url = save_emergency_photo(photo)
+            photo_paths.append(relative_path)
+            photo_urls.append(public_url)
+
+        audio_path, audio_url = save_emergency_audio(audio)
+
+        payload = {
+            "client_id": client_id,
+            "vehicle_name": vehicle_name.strip(),
+            "vehicle_plate": normalize_plate(vehicle_plate),
+            "problem_type": problem_type.strip(),
+            "description": normalize_optional_text(description),
+            "latitude": latitude,
+            "longitude": longitude,
+            "address": normalize_optional_text(address),
+            "zone": normalize_optional_text(zone),
+            "audio_duration_seconds": audio_duration_seconds,
+            "photo_paths": json.dumps(photo_paths),
+            "photo_urls": json.dumps(photo_urls),
+            "audio_path": audio_path,
+            "audio_url": audio_url,
+        }
+
+        created = create_emergency_report(payload)
+    except HTTPException:
+        cleanup_uploaded_files(*photo_paths, audio_path)
+        raise
+    except OperationalError as exc:
+        cleanup_uploaded_files(*photo_paths, audio_path)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    created["photo_paths"] = parse_json_string_list(created.get("photo_paths"))
+    created["photo_urls"] = parse_json_string_list(created.get("photo_urls"))
+    return EmergencyReportResponse.model_validate(created)
 
 
 @app.get(
