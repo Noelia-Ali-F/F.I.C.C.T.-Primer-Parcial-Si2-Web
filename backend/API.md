@@ -203,6 +203,17 @@ curl -X DELETE http://localhost:8000/api/clientes/4
 
 Autentica un cliente registrado desde la app movil.
 
+Tambien autentica al administrador web del sistema con estas credenciales:
+
+- `email`: `administrador@acb.com`
+- `password`: `123ppp+++`
+
+Importante:
+
+- El administrador es un usuario virtual del sistema.
+- No se guarda en la tabla `clients`.
+- Si el correo es `administrador@acb.com`, el backend valida ese acceso fuera del CRUD normal de clientes.
+
 #### Body JSON
 
 ```json
@@ -626,6 +637,8 @@ Columnas principales:
 Los registros de clientes se guardan en PostgreSQL en la tabla:
 
 - `clients`
+
+El administrador `administrador@acb.com` no forma parte de esta tabla porque su acceso es virtual y exclusivo del sistema.
 
 Los registros de tecnicos se guardan en PostgreSQL en la tabla:
 

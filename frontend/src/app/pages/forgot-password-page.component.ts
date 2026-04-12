@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, inject } from '@angular/core';
 import { FormsModule, NgForm } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 
 import { ValidationDialogComponent } from './validation-dialog.component';
@@ -23,6 +23,10 @@ import { ValidationDialogComponent } from './validation-dialog.component';
             <h1>¿Olvidaste tu contraseña?</h1>
             <p class="forgot-password-copy">
               Ingresa tu correo electrónico y te enviaremos instrucciones para recuperar el acceso.
+            </p>
+
+            <p class="login-clean-feedback" *ngIf="showWorkshopResetMessage">
+              Detectamos un ingreso con contraseña temporal. Antes de acceder al sistema, debes registrar una nueva contraseña para el correo indicado.
             </p>
 
             <form class="login-clean-form" (ngSubmit)="submitRecovery(recoveryForm)" #recoveryForm="ngForm">
@@ -57,10 +61,19 @@ import { ValidationDialogComponent } from './validation-dialog.component';
 })
 export class ForgotPasswordPageComponent {
   private readonly dialog = inject(MatDialog);
+  private readonly route = inject(ActivatedRoute);
   private readonly emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   email = '';
   submitMessage = '';
+  showWorkshopResetMessage = false;
+
+  constructor() {
+    this.route.queryParamMap.subscribe((params) => {
+      this.email = params.get('email')?.trim() ?? '';
+      this.showWorkshopResetMessage = params.get('source') === 'workshop-initial-login';
+    });
+  }
 
   submitRecovery(recoveryForm: NgForm): void {
     const missingFields: string[] = [];
@@ -84,7 +97,8 @@ export class ForgotPasswordPageComponent {
 
     this.submitMessage =
       'Te enviamos instrucciones de recuperación al correo registrado si existe en el sistema.';
-    this.email = '';
-    recoveryForm.resetForm();
+    recoveryForm.resetForm({
+      email: this.email,
+    });
   }
 }

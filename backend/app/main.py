@@ -25,6 +25,8 @@ from app.db import (
     get_client_by_email,
     get_client_by_id,
     get_vehicle_by_id,
+    get_workshop_by_id,
+    get_workshop_by_email,
     init_database,
     list_clients,
     list_technicians,
@@ -33,6 +35,7 @@ from app.db import (
     update_client,
     update_client_status,
     update_vehicle,
+    update_workshop_approval_status_with_password,
     update_workshop_registration,
     update_technician,
 )
@@ -43,6 +46,10 @@ VEHICLE_UPLOADS_DIR = UPLOADS_ROOT / "vehicles"
 UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
 VEHICLE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 logger = logging.getLogger(__name__)
+PROTECTED_ADMIN_EMAIL = settings.protected_admin_email.lower().strip()
+PROTECTED_ADMIN_ROLE = "admin"
+PROTECTED_ADMIN_ID = 0
+WORKSHOP_ROLE = "workshop"
 
 
 class WorkshopRegistrationCreate(BaseModel):
@@ -68,11 +75,16 @@ class WorkshopRegistrationResponse(BaseModel):
     email: EmailStr
     zone: str
     specialty: str
+    approval_status: str
     latitude: float | None = None
     longitude: float | None = None
     timezone: str | None = None
     utc_offset_minutes: int | None = None
     created_at: datetime
+
+
+class WorkshopApprovalStatusUpdate(BaseModel):
+    approval_status: str = Field(pattern="^(pendiente|activo|rechazado)$")
 
 
 class TechnicianBase(BaseModel):
@@ -225,6 +237,14 @@ def normalize_plate(plate: str) -> str:
     return plate.strip().upper()
 
 
+def is_protected_admin_email(email: str) -> bool:
+    return email.lower().strip() == PROTECTED_ADMIN_EMAIL
+
+
+def is_protected_admin_role(role: str) -> bool:
+    return role.lower().strip() == PROTECTED_ADMIN_ROLE
+
+
 def ensure_client_exists(client_id: int) -> None:
     try:
         client = get_client_by_id(client_id)
@@ -337,7 +357,13 @@ def healthcheck() -> dict[str, object]:
     status_code=status.HTTP_201_CREATED,
 )
 def register_workshop(payload: WorkshopRegistrationCreate) -> WorkshopRegistrationResponse:
-    created = create_workshop_registration(payload.model_dump())
+    created = create_workshop_registration(
+        {
+            **payload.model_dump(),
+            "approval_status": "pendiente",
+            "password_hash": None,
+        }
+    )
     return WorkshopRegistrationResponse.model_validate(created)
 
 
@@ -508,7 +534,49 @@ def get_workshops() -> list[WorkshopRegistrationResponse]:
     response_model=WorkshopRegistrationResponse,
 )
 def edit_workshop(workshop_id: int, payload: WorkshopRegistrationCreate) -> WorkshopRegistrationResponse:
-    updated = update_workshop_registration(workshop_id, payload.model_dump())
+    updated = update_workshop_registration(
+        workshop_id,
+        {
+            **payload.model_dump(),
+            "approval_status": None,
+            "password_hash": None,
+        },
+    )
+
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+    return WorkshopRegistrationResponse.model_validate(updated)
+
+
+@app.put(
+    f"{settings.api_prefix}/workshops/{{workshop_id}}/approval-status",
+    response_model=WorkshopRegistrationResponse,
+)
+def edit_workshop_approval_status(
+    workshop_id: int,
+    payload: WorkshopApprovalStatusUpdate,
+) -> WorkshopRegistrationResponse:
+    current_workshop = get_workshop_by_id(workshop_id)
+
+    if not current_workshop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+    current_status = str(current_workshop["approval_status"])
+    next_status = payload.approval_status
+
+    if current_status == "activo" and next_status == "pendiente":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un taller activo ya no puede volver a pendiente; solo puede pasar a rechazado",
+        )
+
+    password_hash = hash_password(settings.workshop_initial_password) if next_status == "activo" else None
+    updated = update_workshop_approval_status_with_password(
+        workshop_id,
+        next_status,
+        password_hash,
+    )
 
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
@@ -533,10 +601,24 @@ def remove_workshop(workshop_id: int) -> None:
     status_code=status.HTTP_201_CREATED,
 )
 def register_client(payload: ClientRegistrationCreate) -> ClientRegistrationResponse:
+    normalized_email = payload.email.lower().strip()
+
+    if is_protected_admin_email(normalized_email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ese correo está reservado para el administrador del sistema",
+        )
+
+    if is_protected_admin_role(payload.role):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No se permite registrar clientes con rol administrador",
+        )
+
     client_payload = {
         "identity_card": payload.identity_card,
         "full_name": payload.full_name,
-        "email": payload.email,
+        "email": normalized_email,
         "phone": payload.phone,
         "password_hash": hash_password(payload.password),
         "role": payload.role,
@@ -582,10 +664,24 @@ def edit_client_status(client_id: int, payload: ClientStatusUpdate) -> ClientReg
     response_model=ClientRegistrationResponse,
 )
 def edit_client(client_id: int, payload: ClientUpdate) -> ClientRegistrationResponse:
+    normalized_email = payload.email.lower().strip()
+
+    if is_protected_admin_email(normalized_email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ese correo está reservado para el administrador del sistema",
+        )
+
+    if is_protected_admin_role(payload.role):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No se permite asignar el rol administrador desde este módulo",
+        )
+
     client_payload = {
         "identity_card": payload.identity_card,
         "full_name": payload.full_name,
-        "email": payload.email,
+        "email": normalized_email,
         "phone": payload.phone,
         "password_hash": hash_password(payload.password) if payload.password else None,
         "role": payload.role,
@@ -623,7 +719,54 @@ def remove_client(client_id: int) -> None:
     response_model=LoginResponse,
 )
 def login(payload: LoginRequest) -> LoginResponse:
-    client = get_client_by_email(payload.email)
+    normalized_email = payload.email.lower().strip()
+
+    if is_protected_admin_email(normalized_email):
+        if payload.password != settings.protected_admin_password:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Correo o contraseña incorrectos",
+            )
+
+        return LoginResponse(
+            id=PROTECTED_ADMIN_ID,
+            email=PROTECTED_ADMIN_EMAIL,
+            full_name=settings.protected_admin_full_name,
+            phone=settings.protected_admin_phone,
+            role=PROTECTED_ADMIN_ROLE,
+            status="active",
+            access_token=secrets.token_urlsafe(32),
+            token_type="bearer",
+        )
+
+    workshop = get_workshop_by_email(normalized_email)
+
+    if workshop:
+        if workshop["approval_status"] != "activo":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="El taller todavía no fue habilitado por el administrador",
+            )
+
+        password_hash = workshop.get("password_hash")
+        if not isinstance(password_hash, str) or not verify_password(payload.password, password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Correo o contraseña incorrectos",
+            )
+
+        return LoginResponse(
+            id=int(workshop["id"]),
+            email=str(workshop["email"]),
+            full_name=str(workshop["workshop_name"]),
+            phone=str(workshop["phone"]),
+            role=WORKSHOP_ROLE,
+            status=str(workshop["approval_status"]),
+            access_token=secrets.token_urlsafe(32),
+            token_type="bearer",
+        )
+
+    client = get_client_by_email(normalized_email)
 
     if not client or not verify_password(payload.password, str(client["password_hash"])):
         raise HTTPException(

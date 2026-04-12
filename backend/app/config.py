@@ -6,6 +6,11 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_debug: bool = True
     api_prefix: str = "/api"
+    protected_admin_email: str = "administrador@acb.com"
+    protected_admin_password: str = "123ppp+++"
+    protected_admin_full_name: str = "Administrador ACB"
+    protected_admin_phone: str = "70000000"
+    workshop_initial_password: str = "acb123*"
 
     postgres_db: str = "diagramador"
     postgres_user: str = "diagramador"

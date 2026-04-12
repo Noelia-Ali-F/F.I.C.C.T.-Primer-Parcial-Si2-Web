@@ -1,4 +1,5 @@
 import { CommonModule } from '@angular/common';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Component, inject } from '@angular/core';
 import { FormsModule, NgForm } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
@@ -74,7 +75,9 @@ import { ValidationDialogComponent } from './validation-dialog.component';
 
               <p class="login-clean-feedback" *ngIf="submitMessage">{{ submitMessage }}</p>
 
-              <button class="button primary login-clean-submit" type="submit">Ingresar</button>
+              <button class="button primary login-clean-submit" type="submit" [disabled]="isSubmitting">
+                {{ isSubmitting ? 'Ingresando...' : 'Ingresar' }}
+              </button>
 
               <label class="login-clean-option is-checked">
                 <input type="checkbox" name="remember" [(ngModel)]="form.remember" />
@@ -91,13 +94,18 @@ import { ValidationDialogComponent } from './validation-dialog.component';
   styleUrl: './shared-pages.css',
 })
 export class LoginPageComponent {
+  private readonly workshopInitialPassword = 'acb123*';
   private readonly emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  private readonly http = inject(HttpClient);
   private readonly dialog = inject(MatDialog);
   private readonly router = inject(Router);
+  private readonly loginApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/auth/login`;
+  private readonly appSessionStorageKey = 'acb_session';
 
-  selectedRole: 'socio' | 'admin' = 'socio';
+  selectedRole: 'socio' | 'admin' = 'admin';
   showPassword = false;
   submitMessage = '';
+  isSubmitting = false;
 
   form = {
     email: '',
@@ -106,6 +114,10 @@ export class LoginPageComponent {
   };
 
   submitLogin(loginForm: NgForm): void {
+    if (this.isSubmitting) {
+      return;
+    }
+
     const missingFields = this.getMissingFields();
 
     if (missingFields.length > 0 || loginForm.invalid) {
@@ -114,8 +126,47 @@ export class LoginPageComponent {
       return;
     }
 
+    this.isSubmitting = true;
     this.submitMessage = '';
-    void this.router.navigate(['/dashboard']);
+
+    this.http
+      .post<LoginResponse>(this.loginApiUrl, {
+        email: this.form.email.trim().toLowerCase(),
+        password: this.form.password,
+      })
+      .subscribe({
+        next: async (response) => {
+          const expectedRole = this.selectedRole === 'admin' ? 'admin' : 'workshop';
+
+          if (response.role !== expectedRole) {
+            this.isSubmitting = false;
+            this.submitMessage =
+              this.selectedRole === 'admin'
+                ? 'Esta pantalla está reservada para la cuenta administradora.'
+                : 'Este acceso corresponde a un usuario diferente.';
+            return;
+          }
+
+          if (response.role === 'workshop' && this.form.password === this.workshopInitialPassword) {
+            this.isSubmitting = false;
+            await this.router.navigate(['/forgot-password'], {
+              queryParams: {
+                email: response.email,
+                source: 'workshop-initial-login',
+              },
+            });
+            return;
+          }
+
+          this.persistSession(response);
+          this.isSubmitting = false;
+          await this.router.navigate(['/dashboard']);
+        },
+        error: (error: HttpErrorResponse) => {
+          this.isSubmitting = false;
+          this.submitMessage = error.error?.detail || 'No se pudo iniciar sesión. Inténtalo nuevamente.';
+        },
+      });
   }
 
   private getMissingFields(): string[] {
@@ -143,4 +194,33 @@ export class LoginPageComponent {
       data: { missingFields },
     });
   }
+
+  private persistSession(response: LoginResponse): void {
+    const storage = this.form.remember ? window.localStorage : window.sessionStorage;
+    const payload = JSON.stringify({
+      id: response.id,
+      email: response.email,
+      fullName: response.full_name,
+      phone: response.phone,
+      role: response.role,
+      status: response.status,
+      accessToken: response.access_token,
+      tokenType: response.token_type,
+    });
+
+    window.localStorage.removeItem(this.appSessionStorageKey);
+    window.sessionStorage.removeItem(this.appSessionStorageKey);
+    storage.setItem(this.appSessionStorageKey, payload);
+  }
 }
+
+type LoginResponse = {
+  id: number;
+  email: string;
+  full_name: string;
+  phone: string;
+  role: string;
+  status: string;
+  access_token: string | null;
+  token_type: string | null;
+};

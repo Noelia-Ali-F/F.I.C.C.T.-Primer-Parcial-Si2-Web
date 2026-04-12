@@ -2,12 +2,12 @@ import { CommonModule, DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 type DashboardSection = 'dashboard' | 'workshops' | 'technicians' | 'clients';
 type TechnicianStatus = 'disponible' | 'ocupado' | 'fuera_de_servicio';
 type TechnicianFilter = 'activos' | 'todos' | 'historial';
-type WorkshopApprovalStatus = 'pendiente' | 'aprobada' | 'rechazada';
+type WorkshopApprovalStatus = 'pendiente' | 'activo' | 'rechazado';
 type ClientStatus = 'active' | 'suspended';
 
 type DashboardStat = {
@@ -33,15 +33,12 @@ type WorkshopRegistration = {
   email: string;
   zone: string;
   specialty: string;
+  approval_status: WorkshopApprovalStatus;
   latitude: number | null;
   longitude: number | null;
   timezone: string | null;
   utc_offset_minutes: number | null;
   created_at: string;
-};
-
-type WorkshopDisplayItem = WorkshopRegistration & {
-  approval_status: WorkshopApprovalStatus;
 };
 
 type Technician = {
@@ -96,6 +93,17 @@ type WorkshopFormModel = {
   specialty: string;
 };
 
+type AdminSession = {
+  id: number;
+  email: string;
+  fullName: string;
+  phone: string;
+  role: string;
+  status: string;
+  accessToken: string | null;
+  tokenType: string | null;
+};
+
 @Component({
   selector: 'app-dashboard-page',
   standalone: true,
@@ -147,7 +155,7 @@ type WorkshopFormModel = {
               >
                 <span class="dashboard-submenu-bullet"></span>
                 <span>Taller</span>
-                <strong>{{ displayWorkshops.length | number: '2.0-0' }}</strong>
+                <strong>{{ workshops.length | number: '2.0-0' }}</strong>
               </button>
             </div>
           </div>
@@ -256,15 +264,20 @@ type WorkshopFormModel = {
 
           <div class="dashboard-topbar-actions">
             <div class="dashboard-user-pill">
-              <span class="dashboard-user-avatar">JF</span>
-              <span class="dashboard-user-name">Jhasmany Fernandez</span>
+              <span class="dashboard-user-avatar">{{ userInitials }}</span>
+              <span class="dashboard-user-name">{{ userDisplayName }}</span>
             </div>
 
             <button class="dashboard-topbar-icon" type="button" aria-label="Notificaciones">
               🔔
             </button>
 
-            <a class="dashboard-topbar-icon dashboard-topbar-logout" routerLink="/login" aria-label="Cerrar sesion">
+            <a
+              class="dashboard-topbar-icon dashboard-topbar-logout"
+              routerLink="/login"
+              aria-label="Cerrar sesion"
+              (click)="logout()"
+            >
               ⎋
             </a>
           </div>
@@ -347,7 +360,7 @@ type WorkshopFormModel = {
                 <h2>Registra tu taller mecánico</h2>
               </div>
               <div class="dashboard-toolbar">
-                <span class="dashboard-toolbar-note">{{ displayWorkshops.length }} registros cargados</span>
+                <span class="dashboard-toolbar-note">{{ workshops.length }} registros cargados</span>
                 <button class="dashboard-refresh-button" type="button" (click)="loadWorkshops()">
                   Actualizar
                 </button>
@@ -355,11 +368,11 @@ type WorkshopFormModel = {
             </div>
 
             <p class="dashboard-loading" *ngIf="isLoading">Cargando talleres registrados...</p>
-            <p class="dashboard-empty" *ngIf="!isLoading && !displayWorkshops.length">
+            <p class="dashboard-empty" *ngIf="!isLoading && !workshops.length">
               Aún no hay talleres registrados.
             </p>
 
-            <div class="dashboard-table-wrap" *ngIf="!isLoading && displayWorkshops.length">
+            <div class="dashboard-table-wrap" *ngIf="!isLoading && workshops.length">
               <table class="dashboard-table">
                 <thead>
                   <tr>
@@ -434,9 +447,9 @@ type WorkshopFormModel = {
               </table>
             </div>
 
-            <div class="dashboard-pagination" *ngIf="!isLoading && displayWorkshops.length > workshopsPageSize">
+            <div class="dashboard-pagination" *ngIf="!isLoading && workshops.length > workshopsPageSize">
               <p class="dashboard-pagination-info">
-                Mostrando {{ workshopsRangeStart }}-{{ workshopsRangeEnd }} de {{ displayWorkshops.length }} registros
+                Mostrando {{ workshopsRangeStart }}-{{ workshopsRangeEnd }} de {{ workshops.length }} registros
               </p>
 
               <div class="dashboard-pagination-actions">
@@ -892,9 +905,11 @@ type WorkshopFormModel = {
 })
 export class DashboardPageComponent {
   private readonly http = inject(HttpClient);
+  private readonly router = inject(Router);
   private readonly workshopsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops`;
   private readonly techniciansApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/technicians`;
   private readonly clientsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/clientes`;
+  private readonly appSessionStorageKey = 'acb_session';
 
   readonly requests: DashboardItem[] = [
     {
@@ -927,6 +942,7 @@ export class DashboardPageComponent {
   isClientsLoading = true;
   isSavingTechnician = false;
   isSavingWorkshop = false;
+  isUpdatingWorkshopApproval = false;
   isSavingClient = false;
   editingTechnicianId: number | null = null;
   editingWorkshopId: number | null = null;
@@ -941,8 +957,7 @@ export class DashboardPageComponent {
   showClientDeleteModal = false;
   workshopsPage = 1;
   readonly workshopsPageSize = 15;
-  private readonly workshopApprovalStorageKey = 'dashboard-workshop-approval-status';
-  private workshopApprovalState: Record<number, WorkshopApprovalStatus> = this.readWorkshopApprovalState();
+  private readonly adminSession: AdminSession | null = this.readAdminSession();
   clientPendingDelete: Client | null = null;
 
   technicianForm: TechnicianFormModel = this.createEmptyTechnicianForm();
@@ -1009,28 +1024,39 @@ export class DashboardPageComponent {
     return 'Resumen general';
   }
 
+  get userDisplayName(): string {
+    return this.adminSession?.fullName?.trim() || 'Administrador';
+  }
+
+  get userInitials(): string {
+    const parts = this.userDisplayName
+      .split(' ')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .slice(0, 2);
+
+    if (!parts.length) {
+      return 'AD';
+    }
+
+    return parts.map((part) => part.charAt(0).toUpperCase()).join('');
+  }
+
   get recentWorkshops(): WorkshopRegistration[] {
     return this.workshops.slice(0, 4);
   }
 
-  get displayWorkshops(): WorkshopDisplayItem[] {
-    return this.workshops.map((workshop) => ({
-      ...workshop,
-      approval_status: this.workshopApprovalState[workshop.id] ?? 'pendiente',
-    }));
-  }
-
-  get paginatedWorkshops(): WorkshopDisplayItem[] {
+  get paginatedWorkshops(): WorkshopRegistration[] {
     const start = (this.workshopsPage - 1) * this.workshopsPageSize;
-    return this.displayWorkshops.slice(start, start + this.workshopsPageSize);
+    return this.workshops.slice(start, start + this.workshopsPageSize);
   }
 
   get workshopsTotalPages(): number {
-    return Math.max(1, Math.ceil(this.displayWorkshops.length / this.workshopsPageSize));
+    return Math.max(1, Math.ceil(this.workshops.length / this.workshopsPageSize));
   }
 
   get workshopsRangeStart(): number {
-    if (!this.displayWorkshops.length) {
+    if (!this.workshops.length) {
       return 0;
     }
 
@@ -1038,7 +1064,7 @@ export class DashboardPageComponent {
   }
 
   get workshopsRangeEnd(): number {
-    return Math.min(this.workshopsPage * this.workshopsPageSize, this.displayWorkshops.length);
+    return Math.min(this.workshopsPage * this.workshopsPageSize, this.workshops.length);
   }
 
   get recentTechnicians(): Technician[] {
@@ -1115,6 +1141,15 @@ export class DashboardPageComponent {
     this.isSidebarCollapsed = !this.isSidebarCollapsed;
   }
 
+  logout(): void {
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(this.appSessionStorageKey);
+      window.sessionStorage.removeItem(this.appSessionStorageKey);
+    }
+
+    void this.router.navigate(['/login']);
+  }
+
   goToPreviousWorkshopsPage(): void {
     this.workshopsPage = Math.max(1, this.workshopsPage - 1);
   }
@@ -1155,12 +1190,12 @@ export class DashboardPageComponent {
   }
 
   workshopApprovalLabel(status: WorkshopApprovalStatus): string {
-    if (status === 'aprobada') {
-      return 'Aprobada';
+    if (status === 'activo') {
+      return 'Activo';
     }
 
-    if (status === 'rechazada') {
-      return 'Rechazada';
+    if (status === 'rechazado') {
+      return 'Rechazado';
     }
 
     return 'Pendiente';
@@ -1289,19 +1324,35 @@ export class DashboardPageComponent {
       });
   }
 
-  cycleWorkshopApproval(workshop: WorkshopDisplayItem): void {
+  cycleWorkshopApproval(workshop: WorkshopRegistration): void {
+    if (this.isUpdatingWorkshopApproval) {
+      return;
+    }
+
     const nextStatus: WorkshopApprovalStatus =
       workshop.approval_status === 'pendiente'
-        ? 'aprobada'
-        : workshop.approval_status === 'aprobada'
-          ? 'rechazada'
-          : 'pendiente';
+        ? 'activo'
+        : 'rechazado';
 
-    this.workshopApprovalState[workshop.id] = nextStatus;
-    this.persistWorkshopApprovalState();
+    this.isUpdatingWorkshopApproval = true;
+
+    this.http
+      .put<WorkshopRegistration>(`${this.workshopsApiUrl}/${workshop.id}/approval-status`, {
+        approval_status: nextStatus,
+      })
+      .subscribe({
+        next: () => {
+          this.isUpdatingWorkshopApproval = false;
+          this.loadWorkshops();
+        },
+        error: () => {
+          this.isUpdatingWorkshopApproval = false;
+          window.alert('No se pudo actualizar el estado de aprobación del taller.');
+        },
+      });
   }
 
-  editWorkshop(workshop: WorkshopDisplayItem): void {
+  editWorkshop(workshop: WorkshopRegistration): void {
     this.editingWorkshopId = workshop.id;
     this.workshopEditFeedback = '';
     this.workshopForm = {
@@ -1315,7 +1366,7 @@ export class DashboardPageComponent {
     this.showWorkshopEditModal = true;
   }
 
-  deleteWorkshop(workshop: WorkshopDisplayItem): void {
+  deleteWorkshop(workshop: WorkshopRegistration): void {
     const confirmed = window.confirm(`¿Deseas eliminar el taller ${workshop.workshop_name}?`);
 
     if (!confirmed) {
@@ -1324,8 +1375,6 @@ export class DashboardPageComponent {
 
     this.http.delete(`${this.workshopsApiUrl}/${workshop.id}`).subscribe({
       next: () => {
-        delete this.workshopApprovalState[workshop.id];
-        this.persistWorkshopApprovalState();
         this.loadWorkshops();
       },
       error: () => {
@@ -1550,35 +1599,24 @@ export class DashboardPageComponent {
     });
   }
 
-  private normalizeWorkshopApprovalStatus(value: string): WorkshopApprovalStatus | null {
-    const normalized = value.trim().toLowerCase();
-
-    if (normalized === 'pendiente' || normalized === 'aprobada' || normalized === 'rechazada') {
-      return normalized;
+  private readAdminSession(): AdminSession | null {
+    if (typeof window === 'undefined') {
+      return null;
     }
 
-    return null;
-  }
+    const raw =
+      window.localStorage.getItem(this.appSessionStorageKey) ||
+      window.sessionStorage.getItem(this.appSessionStorageKey);
 
-  private readWorkshopApprovalState(): Record<number, WorkshopApprovalStatus> {
-    if (typeof window === 'undefined') {
-      return {};
+    if (!raw) {
+      return null;
     }
 
     try {
-      const raw = window.localStorage.getItem(this.workshopApprovalStorageKey);
-      return raw ? JSON.parse(raw) : {};
+      return JSON.parse(raw) as AdminSession;
     } catch {
-      return {};
+      return null;
     }
-  }
-
-  private persistWorkshopApprovalState(): void {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    window.localStorage.setItem(this.workshopApprovalStorageKey, JSON.stringify(this.workshopApprovalState));
   }
 
   private refreshStats(): void {

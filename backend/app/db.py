@@ -22,6 +22,8 @@ CREATE_WORKSHOPS_TABLE_SQL = text(
         email VARCHAR(160) NOT NULL,
         zone VARCHAR(120) NOT NULL,
         specialty VARCHAR(120) NOT NULL,
+        approval_status VARCHAR(30) NOT NULL DEFAULT 'pendiente',
+        password_hash VARCHAR(255),
         latitude DOUBLE PRECISION,
         longitude DOUBLE PRECISION,
         timezone VARCHAR(120),
@@ -91,6 +93,8 @@ INSERT_WORKSHOP_SQL = text(
         email,
         zone,
         specialty,
+        approval_status,
+        password_hash,
         latitude,
         longitude,
         timezone,
@@ -103,6 +107,8 @@ INSERT_WORKSHOP_SQL = text(
         :email,
         :zone,
         :specialty,
+        :approval_status,
+        :password_hash,
         :latitude,
         :longitude,
         :timezone,
@@ -116,6 +122,8 @@ INSERT_WORKSHOP_SQL = text(
         email,
         zone,
         specialty,
+        approval_status,
+        password_hash,
         latitude,
         longitude,
         timezone,
@@ -134,6 +142,8 @@ LIST_WORKSHOPS_SQL = text(
         email,
         zone,
         specialty,
+        approval_status,
+        password_hash,
         latitude,
         longitude,
         timezone,
@@ -154,6 +164,8 @@ UPDATE_WORKSHOP_SQL = text(
         email = :email,
         zone = :zone,
         specialty = :specialty,
+        approval_status = COALESCE(:approval_status, approval_status),
+        password_hash = COALESCE(:password_hash, password_hash),
         latitude = :latitude,
         longitude = :longitude,
         timezone = :timezone,
@@ -167,11 +179,84 @@ UPDATE_WORKSHOP_SQL = text(
         email,
         zone,
         specialty,
+        approval_status,
+        password_hash,
         latitude,
         longitude,
         timezone,
         utc_offset_minutes,
         created_at
+    """
+)
+
+UPDATE_WORKSHOP_APPROVAL_STATUS_SQL = text(
+    """
+    UPDATE workshop_registrations
+    SET
+        approval_status = :approval_status,
+        password_hash = COALESCE(:password_hash, password_hash)
+    WHERE id = :id
+    RETURNING
+        id,
+        workshop_name,
+        contact_name,
+        phone,
+        email,
+        zone,
+        specialty,
+        approval_status,
+        password_hash,
+        latitude,
+        longitude,
+        timezone,
+        utc_offset_minutes,
+        created_at
+    """
+)
+
+GET_WORKSHOP_BY_EMAIL_SQL = text(
+    """
+    SELECT
+        id,
+        workshop_name,
+        contact_name,
+        phone,
+        email,
+        zone,
+        specialty,
+        approval_status,
+        password_hash,
+        latitude,
+        longitude,
+        timezone,
+        utc_offset_minutes,
+        created_at
+    FROM workshop_registrations
+    WHERE email = :email
+    LIMIT 1
+    """
+)
+
+GET_WORKSHOP_BY_ID_SQL = text(
+    """
+    SELECT
+        id,
+        workshop_name,
+        contact_name,
+        phone,
+        email,
+        zone,
+        specialty,
+        approval_status,
+        password_hash,
+        latitude,
+        longitude,
+        timezone,
+        utc_offset_minutes,
+        created_at
+    FROM workshop_registrations
+    WHERE id = :id
+    LIMIT 1
     """
 )
 
@@ -552,6 +637,25 @@ def init_database() -> None:
         connection.execute(
             text("ALTER TABLE workshop_registrations ADD COLUMN IF NOT EXISTS utc_offset_minutes INTEGER")
         )
+        connection.execute(
+            text(
+                "ALTER TABLE workshop_registrations "
+                "ADD COLUMN IF NOT EXISTS approval_status VARCHAR(30) NOT NULL DEFAULT 'pendiente'"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE workshop_registrations "
+                "ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE workshop_registrations "
+                "SET approval_status = 'pendiente' "
+                "WHERE approval_status IS NULL OR approval_status = ''"
+            )
+        )
         connection.execute(text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS role VARCHAR(40) DEFAULT 'client'"))
         connection.execute(
             text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'active'")
@@ -599,6 +703,52 @@ def list_workshop_registrations() -> list[dict[str, object]]:
 def update_workshop_registration(workshop_id: int, payload: Mapping[str, object]) -> dict[str, object] | None:
     with engine.begin() as connection:
         result = connection.execute(UPDATE_WORKSHOP_SQL, {"id": workshop_id, **payload})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def update_workshop_approval_status(workshop_id: int, approval_status: str) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            UPDATE_WORKSHOP_APPROVAL_STATUS_SQL,
+            {
+                "id": workshop_id,
+                "approval_status": approval_status,
+                "password_hash": None,
+            },
+        )
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def get_workshop_by_email(email: str) -> dict[str, object] | None:
+    with engine.connect() as connection:
+        result = connection.execute(GET_WORKSHOP_BY_EMAIL_SQL, {"email": email})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def get_workshop_by_id(workshop_id: int) -> dict[str, object] | None:
+    with engine.connect() as connection:
+        result = connection.execute(GET_WORKSHOP_BY_ID_SQL, {"id": workshop_id})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def update_workshop_approval_status_with_password(
+    workshop_id: int,
+    approval_status: str,
+    password_hash: str | None,
+) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            UPDATE_WORKSHOP_APPROVAL_STATUS_SQL,
+            {
+                "id": workshop_id,
+                "approval_status": approval_status,
+                "password_hash": password_hash,
+            },
+        )
         row = result.mappings().one_or_none()
     return dict(row) if row else None
 

@@ -21,3 +21,15 @@ Estructura base del proyecto web para el primer parcial de SI2.
 - Backend: `http://localhost:8000`
 - API healthcheck: `http://localhost:8000/api/health`
 - PostgreSQL: `localhost:5432`
+
+## Administrador Del Sistema
+
+- Login web: `http://localhost:4200/login`
+- Correo: `administrador@acb.com`
+- Contrasena: `123ppp+++`
+
+Notas:
+- Este administrador es un usuario virtual del sistema.
+- No se guarda en la tabla `clients` de PostgreSQL.
+- Su autenticacion se resuelve directamente en `POST /api/auth/login`.
+- El correo `administrador@acb.com` queda reservado y no debe usarse para registros normales de clientes.
