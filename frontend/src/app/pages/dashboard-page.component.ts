@@ -4,7 +4,7 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 
-type DashboardSection = 'dashboard' | 'workshops' | 'technicians' | 'clients';
+type DashboardSection = 'dashboard' | 'workshops' | 'technicians' | 'clients' | 'maintenance' | 'emergencies';
 type TechnicianStatus = 'disponible' | 'ocupado' | 'fuera_de_servicio';
 type TechnicianFilter = 'activos' | 'todos' | 'historial';
 type WorkshopApprovalStatus = 'pendiente' | 'activo' | 'rechazado';
@@ -23,6 +23,19 @@ type DashboardItem = {
   subtitle: string;
   meta: string;
   priority: 'Alta' | 'Media' | 'Seguimiento';
+};
+
+type MaintenanceRequest = {
+  id: number;
+  code: string;
+  client: string;
+  vehicle: string;
+  location: string;
+  priority: 'Alta' | 'Media' | 'Baja';
+  status: 'pendiente' | 'activo' | 'rechazado';
+  distance: string;
+  detail: string;
+  reportedAt: string;
 };
 
 type WorkshopRegistration = {
@@ -92,6 +105,7 @@ type WorkshopFormModel = {
   email: string;
   zone: string;
   specialty: string;
+  password: string;
 };
 
 type AdminSession = {
@@ -212,18 +226,41 @@ type AdminSession = {
           </div>
 
           <div class="dashboard-menu-group">
-            <button class="dashboard-menu-link" type="button">
+            <button
+              class="dashboard-menu-link"
+              type="button"
+              [class.is-active]="selectedSection === 'maintenance'"
+              (click)="selectSection('maintenance')"
+            >
               <span class="dashboard-menu-icon">⚙</span>
               <span>Mantenimiento</span>
             </button>
           </div>
 
           <div class="dashboard-menu-group">
-            <button class="dashboard-menu-link" type="button">
+            <button
+              class="dashboard-menu-link"
+              type="button"
+              [class.is-active]="selectedSection === 'emergencies'"
+              (click)="selectSection('emergencies')"
+            >
               <span class="dashboard-menu-icon">⬒</span>
               <span>Emergencias</span>
               <span class="dashboard-menu-badge">24/7</span>
             </button>
+
+            <div class="dashboard-submenu">
+              <button
+                class="dashboard-submenu-item"
+                type="button"
+                [class.is-active]="selectedSection === 'emergencies'"
+                (click)="selectSection('emergencies')"
+              >
+                <span class="dashboard-submenu-bullet"></span>
+                <span>Solicitudes de emergencia</span>
+                <strong>{{ maintenanceRequests.length | number: '2.0-0' }}</strong>
+              </button>
+            </div>
           </div>
 
           <div class="dashboard-menu-group">
@@ -351,6 +388,140 @@ type AdminSession = {
                 </div>
                 <span>{{ workshop.created_at | date: 'shortTime' }}</span>
               </article>
+            </div>
+          </article>
+
+          <article class="dashboard-panel dashboard-panel-wide" *ngIf="selectedSection === 'emergencies'">
+            <div class="dashboard-panel-head">
+              <div>
+                <p class="dashboard-panel-kicker">Gestión de emergencias</p>
+                <h2>Solicitudes de Emergencia</h2>
+              </div>
+              <button class="dashboard-refresh-button" type="button" (click)="clearMaintenanceSearch()">
+                Limpiar filtros
+              </button>
+            </div>
+
+            <div class="maintenance-toolbar">
+              <label class="maintenance-search">
+                <span>Buscar por ID, cliente, vehículo o ubicación</span>
+                <input
+                  type="search"
+                  [(ngModel)]="maintenanceSearch"
+                  placeholder="Buscar..."
+                />
+              </label>
+
+              <div class="maintenance-filter-buttons">
+                <button
+                  type="button"
+                  class="dashboard-secondary-button"
+                  [class.is-active]="maintenanceFilter === 'todas'"
+                  (click)="setMaintenanceFilter('todas')"
+                >
+                  Todas
+                </button>
+                <button
+                  type="button"
+                  class="dashboard-secondary-button"
+                  [class.is-active]="maintenanceFilter === 'pendiente'"
+                  (click)="setMaintenanceFilter('pendiente')"
+                >
+                  Pendiente
+                </button>
+                <button
+                  type="button"
+                  class="dashboard-secondary-button"
+                  [class.is-active]="maintenanceFilter === 'activo'"
+                  (click)="setMaintenanceFilter('activo')"
+                >
+                  Activa
+                </button>
+                <button
+                  type="button"
+                  class="dashboard-secondary-button"
+                  [class.is-active]="maintenanceFilter === 'rechazado'"
+                  (click)="setMaintenanceFilter('rechazado')"
+                >
+                  Rechazado
+                </button>
+              </div>
+            </div>
+
+            <div class="maintenance-layout">
+              <div class="maintenance-list-column">
+                <div
+                  class="maintenance-request-card"
+                  *ngFor="let request of maintenanceRequestsFiltered"
+                  [class.is-selected]="request.id === selectedMaintenanceRequestId"
+                  (click)="selectMaintenanceRequest(request)"
+                >
+                  <div class="maintenance-request-header">
+                    <strong>{{ request.code }}</strong>
+                    <span class="maintenance-priority" [attr.data-priority]="request.priority">
+                      {{ request.priority }}
+                    </span>
+                  </div>
+                  <div class="maintenance-request-body">
+                    <p class="maintenance-request-title">{{ request.client }}</p>
+                    <p class="maintenance-request-subtitle">Vehículo: {{ request.vehicle }}</p>
+                    <p class="maintenance-request-location">
+                      {{ request.location }} · {{ request.distance }}
+                    </p>
+                    <p class="maintenance-request-detail">{{ request.detail }}</p>
+                  </div>
+                  <div class="maintenance-request-footer">
+                    <span class="maintenance-request-status" [attr.data-status]="request.status">
+                      {{ request.status | titlecase }}
+                    </span>
+                    <span>{{ request.reportedAt }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <aside class="maintenance-summary-column">
+                <section class="maintenance-summary-card">
+                  <div class="dashboard-panel-head">
+                    <div>
+                      <p class="dashboard-panel-kicker">Resumen Taller</p>
+                      <h2>Resumen Taller</h2>
+                    </div>
+                  </div>
+                  <div class="maintenance-summary-list">
+                    <div class="maintenance-summary-item" *ngFor="let item of maintenanceSummaryCounts">
+                      <strong>{{ item.value }}</strong>
+                      <span>{{ item.label }}</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="maintenance-map-card">
+                  <div class="dashboard-panel-head">
+                    <div>
+                      <p class="dashboard-panel-kicker">Mapa</p>
+                      <h2>Ubicación</h2>
+                    </div>
+                  </div>
+                  <div class="maintenance-map-placeholder">
+                    <span>Mapa en construcción</span>
+                  </div>
+                </section>
+
+                <section class="maintenance-detail-card" *ngIf="selectedMaintenanceRequest">
+                  <div class="dashboard-panel-head">
+                    <div>
+                      <p class="dashboard-panel-kicker">Detalle de emergencia</p>
+                      <h2>{{ selectedMaintenanceRequest.code }}</h2>
+                    </div>
+                  </div>
+                  <p><strong>Cliente:</strong> {{ selectedMaintenanceRequest.client }}</p>
+                  <p><strong>Vehículo:</strong> {{ selectedMaintenanceRequest.vehicle }}</p>
+                  <p><strong>Ubicación:</strong> {{ selectedMaintenanceRequest.location }}</p>
+                  <p><strong>Prioridad:</strong> {{ selectedMaintenanceRequest.priority }}</p>
+                  <p><strong>Estado:</strong> {{ selectedMaintenanceRequest.status | titlecase }}</p>
+                  <p>{{ selectedMaintenanceRequest.detail }}</p>
+                </section>
+              </aside>
             </div>
           </article>
 
@@ -779,6 +950,17 @@ type AdminSession = {
               />
             </label>
 
+            <label class="workshop-edit-field workshop-edit-field-wide">
+              <span>Nueva contraseña</span>
+              <input
+                type="password"
+                name="password"
+                [(ngModel)]="workshopForm.password"
+                minlength="6"
+                placeholder="Dejar vacio para mantener la actual"
+              />
+            </label>
+
             <p class="workshop-edit-feedback" *ngIf="workshopEditFeedback">
               {{ workshopEditFeedback }}
             </p>
@@ -933,6 +1115,49 @@ export class DashboardPageComponent {
     },
   ];
 
+  readonly maintenanceRequests: MaintenanceRequest[] = [
+    {
+      id: 125,
+      code: 'EMG-000125',
+      client: 'Juan Pérez',
+      vehicle: 'Toyota Corolla ABC-123',
+      location: 'Av. Principal 23',
+      priority: 'Alta',
+      status: 'pendiente',
+      distance: '0,4 km',
+      detail: 'Sobrecalentamiento con humo visible del motor.',
+      reportedAt: 'Hace 8 min',
+    },
+    {
+      id: 112,
+      code: 'EMG-000112',
+      client: 'María López',
+      vehicle: 'Honda Civic TGL-456',
+      location: 'Calle Norte 35',
+      priority: 'Alta',
+      status: 'pendiente',
+      distance: '0,7 km',
+      detail: 'Ruido extraño en el motor y emisión de humo.',
+      reportedAt: 'Hace 12 min',
+    },
+    {
+      id: 123,
+      code: 'EMG-000123',
+      client: 'Carlos Díaz',
+      vehicle: 'Nissan Sentra KLM-789',
+      location: 'Av. Central 20',
+      priority: 'Media',
+      status: 'pendiente',
+      distance: '0,8 km',
+      detail: 'Batería descargada, el vehículo no enciende.',
+      reportedAt: 'Hace 21 min',
+    },
+  ];
+
+  maintenanceSearch = '';
+  maintenanceFilter: 'todas' | 'pendiente' | 'activo' | 'rechazado' = 'todas';
+  selectedMaintenanceRequestId: number | null = 125;
+
   selectedSection: DashboardSection = 'dashboard';
   isSidebarCollapsed = false;
   workshops: WorkshopRegistration[] = [];
@@ -1022,6 +1247,14 @@ export class DashboardPageComponent {
       return 'Gestion de Solicitudes';
     }
 
+    if (this.selectedSection === 'maintenance') {
+      return 'Mantenimiento';
+    }
+
+    if (this.selectedSection === 'emergencies') {
+      return 'Solicitudes de emergencia';
+    }
+
     return 'Resumen general';
   }
 
@@ -1035,6 +1268,39 @@ export class DashboardPageComponent {
 
   get currentWorkshopId(): number | null {
     return this.isWorkshopSession ? this.adminSession?.id ?? null : null;
+  }
+
+  get maintenanceRequestsFiltered(): MaintenanceRequest[] {
+    return this.maintenanceRequests.filter((request) => {
+      const matchesSearch = [request.code, request.client, request.vehicle, request.location, request.detail]
+        .some((value) => value.toLowerCase().includes(this.maintenanceSearch.toLowerCase()));
+      const matchesFilter = this.maintenanceFilter === 'todas' || request.status === this.maintenanceFilter;
+      return matchesSearch && matchesFilter;
+    });
+  }
+
+  get selectedMaintenanceRequest(): MaintenanceRequest | null {
+    return this.maintenanceRequests.find((request) => request.id === this.selectedMaintenanceRequestId) ?? null;
+  }
+
+  get maintenanceSummaryCounts(): { label: string; value: number }[] {
+    return [
+      { label: 'Urgentes', value: this.maintenanceRequests.filter((request) => request.priority === 'Alta').length },
+      { label: 'Pendientes', value: this.maintenanceRequests.filter((request) => request.status === 'pendiente').length },
+      { label: 'Activas', value: this.maintenanceRequests.filter((request) => request.status === 'activo').length },
+    ];
+  }
+
+  selectMaintenanceRequest(request: MaintenanceRequest): void {
+    this.selectedMaintenanceRequestId = request.id;
+  }
+
+  setMaintenanceFilter(filter: 'todas' | 'pendiente' | 'activo' | 'rechazado'): void {
+    this.maintenanceFilter = filter;
+  }
+
+  clearMaintenanceSearch(): void {
+    this.maintenanceSearch = '';
   }
 
   get userInitials(): string {
@@ -1126,6 +1392,7 @@ export class DashboardPageComponent {
       email: '',
       zone: '',
       specialty: '',
+      password: '',
     };
   }
 
@@ -1393,6 +1660,7 @@ export class DashboardPageComponent {
       email: workshop.email,
       zone: workshop.zone,
       specialty: workshop.specialty,
+      password: '',
     };
     this.showWorkshopEditModal = true;
   }
@@ -1434,14 +1702,18 @@ export class DashboardPageComponent {
       return;
     }
 
-    const payload: WorkshopRegistration = {
-      ...target,
+    const payload = {
       workshop_name: this.workshopForm.workshop_name.trim(),
       contact_name: this.workshopForm.contact_name.trim(),
       phone: this.workshopForm.phone.trim(),
       email: this.workshopForm.email.trim(),
       zone: this.workshopForm.zone.trim(),
       specialty: this.workshopForm.specialty.trim(),
+      latitude: target.latitude,
+      longitude: target.longitude,
+      timezone: target.timezone,
+      utc_offset_minutes: target.utc_offset_minutes,
+      password: this.workshopForm.password.trim(),
     };
 
     if (
@@ -1452,6 +1724,11 @@ export class DashboardPageComponent {
       !payload.specialty
     ) {
       this.workshopEditFeedback = 'Completa Taller, Responsable, Contacto, Zona y Especialidad.';
+      return;
+    }
+
+    if (payload.password && payload.password.length < 6) {
+      this.workshopEditFeedback = 'La nueva contraseña del taller debe tener al menos 6 caracteres.';
       return;
     }
 

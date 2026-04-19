@@ -21,9 +21,9 @@ import { ValidationDialogComponent } from './validation-dialog.component';
 
           <article class="login-clean-form-card">
             <span class="forgot-password-eyebrow">Soporte de acceso</span>
-            <h1>¿Olvidaste tu contraseña?</h1>
+            <h1>{{ pageTitle }}</h1>
             <p class="forgot-password-copy">
-              Ingresa tu correo electrónico y registra una nueva contraseña para recuperar el acceso.
+              {{ pageCopy }}
             </p>
 
             <p class="login-clean-feedback" *ngIf="showWorkshopResetMessage">
@@ -110,7 +110,12 @@ export class ForgotPasswordPageComponent {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  private readonly changePasswordApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops/change-password`;
+  private readonly workshopsChangePasswordApiUrl =
+    `${window.location.protocol}//${window.location.hostname}:8000/api/workshops/change-password`;
+  private readonly workshopsForgotPasswordApiUrl =
+    `${window.location.protocol}//${window.location.hostname}:8000/api/workshops/forgot-password`;
+  private readonly clientsForgotPasswordApiUrl =
+    `${window.location.protocol}//${window.location.hostname}:8000/api/clientes/forgot-password`;
 
   email = '';
   newPassword = '';
@@ -120,6 +125,16 @@ export class ForgotPasswordPageComponent {
   submitMessage = '';
   showWorkshopResetMessage = false;
   isSubmitting = false;
+
+  get pageTitle(): string {
+    return this.showWorkshopResetMessage ? 'Registrar nueva contraseña' : '¿Olvidaste tu contraseña?';
+  }
+
+  get pageCopy(): string {
+    return this.showWorkshopResetMessage
+      ? 'Registra una nueva contraseña para el taller antes de continuar con el inicio de sesión.'
+      : 'Ingresa tu correo electrónico y registra una nueva contraseña para recuperar el acceso como cliente o taller.';
+  }
 
   constructor() {
     this.route.queryParamMap.subscribe((params) => {
@@ -167,12 +182,36 @@ export class ForgotPasswordPageComponent {
     this.isSubmitting = true;
     this.submitMessage = '';
 
+    const payload = {
+      email: normalizedEmail.toLowerCase(),
+      newPassword: this.newPassword.trim(),
+      confirmPassword: this.confirmPassword.trim(),
+    };
+
+    if (this.showWorkshopResetMessage) {
+      this.http
+        .post<{ message: string }>(this.workshopsChangePasswordApiUrl, payload)
+        .subscribe({
+          next: async (response) => {
+            this.isSubmitting = false;
+            this.submitMessage = response.message;
+            recoveryForm.resetForm({
+              email: normalizedEmail,
+              newPassword: '',
+              confirmPassword: '',
+            });
+            await this.router.navigate(['/login']);
+          },
+          error: (error: HttpErrorResponse) => {
+            this.isSubmitting = false;
+            this.submitMessage = error.error?.detail || 'No se pudo actualizar la contraseña.';
+          },
+        });
+      return;
+    }
+
     this.http
-      .post<{ message: string }>(this.changePasswordApiUrl, {
-        email: normalizedEmail.toLowerCase(),
-        newPassword: this.newPassword.trim(),
-        confirmPassword: this.confirmPassword.trim(),
-      })
+      .post<{ message: string }>(this.clientsForgotPasswordApiUrl, payload)
       .subscribe({
         next: async (response) => {
           this.isSubmitting = false;
@@ -184,9 +223,31 @@ export class ForgotPasswordPageComponent {
           });
           await this.router.navigate(['/login']);
         },
-        error: (error: HttpErrorResponse) => {
-          this.isSubmitting = false;
-          this.submitMessage = error.error?.detail || 'No se pudo actualizar la contraseña.';
+        error: (clientError: HttpErrorResponse) => {
+          if (clientError.status !== 404) {
+            this.isSubmitting = false;
+            this.submitMessage = clientError.error?.detail || 'No se pudo actualizar la contraseña.';
+            return;
+          }
+
+          this.http
+            .post<{ message: string }>(this.workshopsForgotPasswordApiUrl, payload)
+            .subscribe({
+              next: async (response) => {
+                this.isSubmitting = false;
+                this.submitMessage = response.message;
+                recoveryForm.resetForm({
+                  email: normalizedEmail,
+                  newPassword: '',
+                  confirmPassword: '',
+                });
+                await this.router.navigate(['/login']);
+              },
+              error: (workshopError: HttpErrorResponse) => {
+                this.isSubmitting = false;
+                this.submitMessage = workshopError.error?.detail || 'No se pudo actualizar la contraseña.';
+              },
+            });
         },
       });
   }

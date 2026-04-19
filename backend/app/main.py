@@ -37,6 +37,7 @@ from app.db import (
     list_vehicles,
     list_workshop_registrations,
     update_client,
+    update_client_password,
     update_client_status,
     update_technician,
     update_technician_for_workshop,
@@ -81,6 +82,10 @@ class WorkshopRegistrationCreate(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     timezone: str | None = Field(default=None, min_length=2, max_length=120)
     utc_offset_minutes: int | None = Field(default=None, ge=-840, le=840)
+
+
+class WorkshopRegistrationUpdate(WorkshopRegistrationCreate):
+    password: str | None = Field(default=None, min_length=6, max_length=255)
 
 
 class WorkshopRegistrationResponse(BaseModel):
@@ -189,6 +194,15 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=255)
 
 
+class AccountTypeLookupRequest(BaseModel):
+    email: EmailStr
+
+
+class AccountTypeLookupResponse(BaseModel):
+    exists: bool
+    role: str | None = None
+
+
 class LoginResponse(BaseModel):
     id: int
     email: EmailStr
@@ -217,6 +231,106 @@ class WorkshopPasswordChangeRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_passwords(self) -> "WorkshopPasswordChangeRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Las contraseñas no coinciden")
+
+        return self
+
+
+class ClientPasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    email: EmailStr
+    current_password: str = Field(
+        min_length=1,
+        max_length=255,
+        validation_alias=AliasChoices("current_password", "currentPassword"),
+    )
+    new_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("new_password", "newPassword", "password"),
+    )
+    confirm_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("confirm_password", "confirmPassword"),
+    )
+
+    @model_validator(mode="after")
+    def validate_passwords(self) -> "ClientPasswordChangeRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Las contraseñas no coinciden")
+
+        if self.current_password == self.new_password:
+            raise ValueError("La nueva contraseña debe ser distinta a la actual")
+
+        return self
+
+
+class ClientForgotPasswordRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    email: EmailStr
+    new_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("new_password", "newPassword", "password"),
+    )
+    confirm_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("confirm_password", "confirmPassword"),
+    )
+
+    @model_validator(mode="after")
+    def validate_passwords(self) -> "ClientForgotPasswordRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Las contraseñas no coinciden")
+
+        return self
+
+
+class WorkshopForgotPasswordRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    email: EmailStr
+    new_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("new_password", "newPassword", "password"),
+    )
+    confirm_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("confirm_password", "confirmPassword"),
+    )
+
+    @model_validator(mode="after")
+    def validate_passwords(self) -> "WorkshopForgotPasswordRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Las contraseñas no coinciden")
+
+        return self
+
+
+class UnifiedForgotPasswordRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    email: EmailStr
+    new_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("new_password", "newPassword", "password"),
+    )
+    confirm_password: str = Field(
+        min_length=6,
+        max_length=255,
+        validation_alias=AliasChoices("confirm_password", "confirmPassword"),
+    )
+
+    @model_validator(mode="after")
+    def validate_passwords(self) -> "UnifiedForgotPasswordRequest":
         if self.new_password != self.confirm_password:
             raise ValueError("Las contraseñas no coinciden")
 
@@ -769,17 +883,68 @@ def get_workshops() -> list[WorkshopRegistrationResponse]:
     return [WorkshopRegistrationResponse.model_validate(row) for row in rows]
 
 
+@app.post(f"{settings.api_prefix}/workshops/change-password")
+def change_workshop_password(payload: WorkshopPasswordChangeRequest) -> dict[str, str]:
+    normalized_email = payload.email.lower().strip()
+    workshop = get_workshop_by_email(normalized_email)
+
+    if not workshop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+    if workshop["approval_status"] != "activo":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El taller todavía no fue habilitado por el administrador",
+        )
+
+    password_hash = workshop.get("password_hash")
+    if not isinstance(password_hash, str) or not verify_password(settings.workshop_initial_password, password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este taller ya no usa la contraseña temporal inicial",
+        )
+
+    updated = update_workshop_password(int(workshop["id"]), hash_password(payload.new_password))
+
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+    return {"message": "La contraseña del taller fue actualizada correctamente"}
+
+
+@app.api_route(f"{settings.api_prefix}/workshops/forgot-password", methods=["POST", "PUT"])
+def forgot_workshop_password(payload: WorkshopForgotPasswordRequest) -> dict[str, str]:
+    normalized_email = payload.email.lower().strip()
+    workshop = get_workshop_by_email(normalized_email)
+
+    if not workshop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+    if workshop["approval_status"] != "activo":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El taller todavía no fue habilitado por el administrador",
+        )
+
+    updated = update_workshop_password(int(workshop["id"]), hash_password(payload.new_password))
+
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+    return {"message": "La contraseña del taller fue restablecida correctamente"}
+
+
 @app.put(
     f"{settings.api_prefix}/workshops/{{workshop_id}}",
     response_model=WorkshopRegistrationResponse,
 )
-def edit_workshop(workshop_id: int, payload: WorkshopRegistrationCreate) -> WorkshopRegistrationResponse:
+def edit_workshop(workshop_id: int, payload: WorkshopRegistrationUpdate) -> WorkshopRegistrationResponse:
     updated = update_workshop_registration(
         workshop_id,
         {
-            **payload.model_dump(),
+            **payload.model_dump(exclude={"password"}),
             "approval_status": None,
-            "password_hash": None,
+            "password_hash": hash_password(payload.password) if payload.password else None,
         },
     )
 
@@ -884,6 +1049,57 @@ def register_client(payload: ClientRegistrationCreate) -> ClientRegistrationResp
 def get_clients() -> list[ClientRegistrationResponse]:
     rows = list_clients()
     return [ClientRegistrationResponse.model_validate(row) for row in rows]
+
+
+@app.post(f"{settings.api_prefix}/clientes/change-password")
+def change_client_password(payload: ClientPasswordChangeRequest) -> dict[str, str]:
+    normalized_email = payload.email.lower().strip()
+    client = get_client_by_email(normalized_email)
+
+    if not client:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
+
+    if client["status"] != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cuenta suspendida",
+        )
+
+    password_hash = client.get("password_hash")
+    if not isinstance(password_hash, str) or not verify_password(payload.current_password, password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="La contraseña actual es incorrecta",
+        )
+
+    updated = update_client_password(int(client["id"]), hash_password(payload.new_password))
+
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
+
+    return {"message": "La contraseña del cliente fue actualizada correctamente"}
+
+
+@app.api_route(f"{settings.api_prefix}/clientes/forgot-password", methods=["POST", "PUT"])
+def forgot_client_password(payload: ClientForgotPasswordRequest) -> dict[str, str]:
+    normalized_email = payload.email.lower().strip()
+    client = get_client_by_email(normalized_email)
+
+    if not client:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
+
+    if client["status"] != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cuenta suspendida",
+        )
+
+    updated = update_client_password(int(client["id"]), hash_password(payload.new_password))
+
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
+
+    return {"message": "La contraseña del cliente fue restablecida correctamente"}
 
 
 @app.put(
@@ -1042,33 +1258,59 @@ def login(payload: LoginRequest) -> LoginResponse:
     )
 
 
-@app.post(f"{settings.api_prefix}/workshops/change-password")
-def change_workshop_password(payload: WorkshopPasswordChangeRequest) -> dict[str, str]:
+@app.post(
+    f"{settings.api_prefix}/auth/account-type",
+    response_model=AccountTypeLookupResponse,
+)
+def lookup_account_type(payload: AccountTypeLookupRequest) -> AccountTypeLookupResponse:
     normalized_email = payload.email.lower().strip()
+
     workshop = get_workshop_by_email(normalized_email)
+    if workshop:
+        return AccountTypeLookupResponse(exists=True, role=WORKSHOP_ROLE)
 
-    if not workshop:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+    client = get_client_by_email(normalized_email)
+    if client:
+        return AccountTypeLookupResponse(exists=True, role=str(client["role"]))
 
-    if workshop["approval_status"] != "activo":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="El taller todavía no fue habilitado por el administrador",
-        )
+    return AccountTypeLookupResponse(exists=False, role=None)
 
-    password_hash = workshop.get("password_hash")
-    if not isinstance(password_hash, str) or not verify_password(settings.workshop_initial_password, password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Este taller ya no usa la contraseña temporal inicial",
-        )
 
-    updated = update_workshop_password(int(workshop["id"]), hash_password(payload.new_password))
+@app.api_route(f"{settings.api_prefix}/auth/forgot-password", methods=["POST", "PUT"])
+def forgot_password(payload: UnifiedForgotPasswordRequest) -> dict[str, str]:
+    normalized_email = payload.email.lower().strip()
 
-    if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+    client = get_client_by_email(normalized_email)
+    if client:
+        if client["status"] != "active":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cuenta suspendida",
+            )
 
-    return {"message": "La contraseña del taller fue actualizada correctamente"}
+        updated = update_client_password(int(client["id"]), hash_password(payload.new_password))
+
+        if not updated:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
+
+        return {"message": "La contraseña del cliente fue restablecida correctamente"}
+
+    workshop = get_workshop_by_email(normalized_email)
+    if workshop:
+        if workshop["approval_status"] != "activo":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="El taller todavía no fue habilitado por el administrador",
+            )
+
+        updated = update_workshop_password(int(workshop["id"]), hash_password(payload.new_password))
+
+        if not updated:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
+
+        return {"message": "La contraseña del taller fue restablecida correctamente"}
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No existe una cuenta con ese correo")
 
 
 @app.post(

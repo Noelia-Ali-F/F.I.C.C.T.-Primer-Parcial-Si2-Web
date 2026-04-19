@@ -590,6 +590,27 @@ UPDATE_CLIENT_STATUS_SQL = text(
     """
 )
 
+UPDATE_CLIENT_PASSWORD_SQL = text(
+    """
+    UPDATE clients
+    SET
+        password_hash = :password_hash,
+        updated_at = NOW()
+    WHERE id = :id
+    RETURNING
+        id,
+        identity_card,
+        full_name,
+        email,
+        phone,
+        role,
+        status,
+        accepted_terms,
+        created_at,
+        updated_at
+    """
+)
+
 DELETE_CLIENT_SQL = text(
     """
     DELETE FROM clients
@@ -1091,6 +1112,16 @@ def update_client_status(client_id: int, status: str) -> dict[str, object] | Non
 def update_client(client_id: int, payload: Mapping[str, object]) -> dict[str, object] | None:
     with engine.begin() as connection:
         result = connection.execute(UPDATE_CLIENT_SQL, {"id": client_id, **payload})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def update_client_password(client_id: int, password_hash: str) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            UPDATE_CLIENT_PASSWORD_SQL,
+            {"id": client_id, "password_hash": password_hash},
+        )
         row = result.mappings().one_or_none()
     return dict(row) if row else None
 

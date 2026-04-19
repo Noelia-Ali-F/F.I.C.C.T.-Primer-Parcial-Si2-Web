@@ -261,6 +261,292 @@ curl -X POST http://localhost:8000/api/auth/login \
   }'
 ```
 
+### `POST /api/auth/account-type`
+
+Permite consultar si un correo pertenece a una cuenta registrada y de qué tipo es.
+
+#### Body JSON
+
+```json
+{
+  "email": "jhasmany@gmail.com"
+}
+```
+
+#### Respuesta cuando existe
+
+```json
+{
+  "exists": true,
+  "role": "workshop"
+}
+```
+
+o
+
+```json
+{
+  "exists": true,
+  "role": "client"
+}
+```
+
+#### Respuesta cuando no existe
+
+```json
+{
+  "exists": false,
+  "role": null
+}
+```
+
+Ejemplo:
+
+```bash
+curl -X POST http://localhost:8000/api/auth/account-type \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jhasmany@gmail.com"
+  }'
+```
+
+### `POST /api/auth/forgot-password`
+
+Permite restablecer la contraseña con una sola ruta para clientes y talleres.
+
+El backend decide internamente si el correo pertenece a un cliente o a un taller.
+
+#### Body JSON
+
+```json
+{
+  "email": "jhasmany@gmail.com",
+  "newPassword": "NuevaClave123",
+  "confirmPassword": "NuevaClave123"
+}
+```
+
+#### Claves aceptadas
+
+- `newPassword`, `new_password`, `password`
+- `confirmPassword`, `confirm_password`
+
+#### Respuesta exitosa
+
+Cliente:
+
+```json
+{
+  "message": "La contraseña del cliente fue restablecida correctamente"
+}
+```
+
+Taller:
+
+```json
+{
+  "message": "La contraseña del taller fue restablecida correctamente"
+}
+```
+
+#### Errores posibles
+
+- `403 Forbidden`: cuenta suspendida o taller no habilitado
+- `404 Not Found`: `{"detail":"No existe una cuenta con ese correo"}`
+- `422 Unprocessable Entity`: datos invalidos o contraseñas que no coinciden
+
+Ejemplo:
+
+```bash
+curl -X POST http://localhost:8000/api/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jhasmany@gmail.com",
+    "newPassword": "NuevaClave123",
+    "confirmPassword": "NuevaClave123"
+  }'
+```
+
+### `POST /api/clientes/change-password`
+
+Permite que un cliente cambie su propia contraseña usando su correo y su contraseña actual.
+
+#### Body JSON
+
+```json
+{
+  "email": "jhasmany@gmail.com",
+  "currentPassword": "claveActual123",
+  "newPassword": "NuevaClave123",
+  "confirmPassword": "NuevaClave123"
+}
+```
+
+#### Claves aceptadas
+
+- `currentPassword`, `current_password`
+- `newPassword`, `new_password`, `password`
+- `confirmPassword`, `confirm_password`
+
+#### Validaciones
+
+- `email`: debe pertenecer a un cliente registrado
+- `current_password`: debe coincidir con la contraseña actual del cliente
+- `new_password`: minimo 6 caracteres
+- `confirm_password`: debe coincidir con `new_password`
+- La nueva contraseña debe ser distinta a la actual
+- La cuenta del cliente debe estar en estado `active`
+
+#### Respuesta exitosa
+
+Codigo: `200 OK`
+
+```json
+{
+  "message": "La contraseña del cliente fue actualizada correctamente"
+}
+```
+
+#### Errores posibles
+
+- `401 Unauthorized`: `{"detail":"La contraseña actual es incorrecta"}`
+- `403 Forbidden`: `{"detail":"Cuenta suspendida"}`
+- `404 Not Found`: `{"detail":"Cliente no encontrado"}`
+- `422 Unprocessable Entity`: datos invalidos o contraseñas que no coinciden
+
+Ejemplo:
+
+```bash
+curl -X POST http://localhost:8000/api/clientes/change-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jhasmany@gmail.com",
+    "currentPassword": "claveActual123",
+    "newPassword": "NuevaClave123",
+    "confirmPassword": "NuevaClave123"
+  }'
+```
+
+### `POST /api/clientes/forgot-password`
+
+Permite restablecer la contraseña de un cliente usando solamente su correo y una nueva contraseña.
+
+Importante:
+
+- Este es un flujo simple de recuperacion.
+- No pide la contraseña actual.
+- No usa token de recuperacion ni envio de correo.
+
+#### Body JSON
+
+```json
+{
+  "email": "jhasmany@gmail.com",
+  "newPassword": "NuevaClave123",
+  "confirmPassword": "NuevaClave123"
+}
+```
+
+#### Claves aceptadas
+
+- `newPassword`, `new_password`, `password`
+- `confirmPassword`, `confirm_password`
+
+#### Validaciones
+
+- `email`: debe pertenecer a un cliente registrado
+- `new_password`: minimo 6 caracteres
+- `confirm_password`: debe coincidir con `new_password`
+- La cuenta del cliente debe estar en estado `active`
+
+#### Respuesta exitosa
+
+Codigo: `200 OK`
+
+```json
+{
+  "message": "La contraseña del cliente fue restablecida correctamente"
+}
+```
+
+#### Errores posibles
+
+- `403 Forbidden`: `{"detail":"Cuenta suspendida"}`
+- `404 Not Found`: `{"detail":"Cliente no encontrado"}`
+- `422 Unprocessable Entity`: datos invalidos o contraseñas que no coinciden
+
+Ejemplo:
+
+```bash
+curl -X POST http://localhost:8000/api/clientes/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jhasmany@gmail.com",
+    "newPassword": "NuevaClave123",
+    "confirmPassword": "NuevaClave123"
+  }'
+```
+
+### `POST /api/workshops/forgot-password`
+
+Permite restablecer la contraseña de un taller usando solamente su correo y una nueva contraseña.
+
+Importante:
+
+- Este es un flujo simple de recuperacion.
+- No pide la contraseña actual.
+- No usa token de recuperacion ni envio de correo.
+
+#### Body JSON
+
+```json
+{
+  "email": "taller@correo.com",
+  "newPassword": "NuevaClave123",
+  "confirmPassword": "NuevaClave123"
+}
+```
+
+#### Claves aceptadas
+
+- `newPassword`, `new_password`, `password`
+- `confirmPassword`, `confirm_password`
+
+#### Validaciones
+
+- `email`: debe pertenecer a un taller registrado
+- `new_password`: minimo 6 caracteres
+- `confirm_password`: debe coincidir con `new_password`
+- El taller debe estar en estado `activo`
+
+#### Respuesta exitosa
+
+Codigo: `200 OK`
+
+```json
+{
+  "message": "La contraseña del taller fue restablecida correctamente"
+}
+```
+
+#### Errores posibles
+
+- `403 Forbidden`: `{"detail":"El taller todavía no fue habilitado por el administrador"}`
+- `404 Not Found`: `{"detail":"Taller no encontrado"}`
+- `422 Unprocessable Entity`: datos invalidos o contraseñas que no coinciden
+
+Ejemplo:
+
+```bash
+curl -X POST http://localhost:8000/api/workshops/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "taller@correo.com",
+    "newPassword": "NuevaClave123",
+    "confirmPassword": "NuevaClave123"
+  }'
+```
+
 ### `POST /api/workshops`
 
 ### `POST /api/emergencias`
@@ -451,6 +737,8 @@ curl http://localhost:8000/api/workshops
 
 Actualiza el registro de un taller existente usando la misma estructura JSON de creacion.
 
+Opcionalmente tambien puede recibir `password` para reemplazar la contraseña actual del taller.
+
 Ejemplo:
 
 ```bash
@@ -463,6 +751,7 @@ curl -X PUT http://localhost:8000/api/workshops/1 \
     "email": "demo@example.com",
     "zone": "Centro",
     "specialty": "Auxilio mecánico",
+    "password": "NuevaClave123",
     "latitude": -17.7833,
     "longitude": -63.1821,
     "timezone": "America/La_Paz",
