@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     postgres_connect_timeout: int = 5
     uploads_dir: str = "uploads"
+    whisper_enabled: bool = True
+    whisper_model: str = "base"
+    whisper_language: str | None = "es"
 
     model_config = SettingsConfigDict(
         env_file=".env",

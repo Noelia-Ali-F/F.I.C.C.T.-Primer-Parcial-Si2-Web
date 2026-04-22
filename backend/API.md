@@ -559,14 +559,34 @@ Registra una solicitud de emergencia enviada desde la app movil usando `multipar
 - `vehicle_name`: nombre mostrado del vehiculo
 - `vehicle_plate`: placa del vehiculo
 - `problem_type`: tipo de problema o emergencia
+- `problem_type_standardized`: calculado por backend a partir de `problem_type` y `description`; no es necesario enviarlo
 - `description`: opcional, descripcion detallada
 - `latitude`: opcional
 - `longitude`: opcional
 - `address`: opcional
 - `zone`: opcional
+- `nearest_workshop_id`: opcional, entero mayor a 0
+- `nearest_workshop_name`: opcional
+- `nearest_workshop_specialty`: opcional
+- `nearest_workshop_zone`: opcional
+- `nearest_workshop_distance_meters`: opcional
 - `audio_duration_seconds`: opcional
 - `photos`: opcional, archivo repetido 0..n veces
 - `audio`: opcional, archivo unico
+
+#### Valores permitidos para `problem_type`
+
+- `Batería`
+- `Neumático`
+- `Combustible`
+- `Motor`
+- `Sistema eléctrico`
+- `Accidente`
+- `Cerrajería / llaves`
+- `Otro`
+
+Si `problem_type` es `Otro`, el cliente movil puede complementar el detalle en `description`.
+En ese caso, el backend intenta clasificarlo automaticamente a una de las 7 categorias estandarizadas y la guarda en `problem_type_standardized`.
 
 #### Nombres de campos aceptados para archivos
 
@@ -595,13 +615,22 @@ Codigo: `201 Created`
   "client_id": 4,
   "vehicle_name": "Toyota Corolla",
   "vehicle_plate": "1234ABC",
-  "problem_type": "pinchazo",
+  "problem_type": "Neumático",
+  "problem_type_standardized": "Neumático",
   "description": "La llanta delantera se vacio en plena avenida",
   "latitude": -17.7833,
   "longitude": -63.1821,
   "address": "Av. Banzer y 4to anillo",
   "zone": "Norte",
+  "nearest_workshop_id": 14,
+  "nearest_workshop_name": "MecaApp",
+  "nearest_workshop_specialty": "Electricidad automotriz",
+  "nearest_workshop_zone": "Centro",
+  "nearest_workshop_distance_meters": 482.37,
   "audio_duration_seconds": 12.4,
+  "audio_transcript": "se me pinchó la llanta en el camino",
+  "audio_transcript_status": "completed",
+  "audio_transcript_error": null,
   "photo_paths": [
     "emergencias/photos/archivo1.jpg"
   ],
@@ -618,6 +647,7 @@ Codigo: `201 Created`
 
 - `400 Bad Request`: archivo de foto o audio invalido
 - `404 Not Found`: `client_id` no existe
+- `422 Unprocessable Entity`: `problem_type` invalido
 - `503 Service Unavailable`: base de datos no disponible
 
 Ejemplo:
@@ -627,16 +657,37 @@ curl -X POST http://localhost:8000/api/emergencias \
   -F "client_id=4" \
   -F "vehicle_name=Toyota Corolla" \
   -F "vehicle_plate=1234ABC" \
-  -F "problem_type=pinchazo" \
+  -F "problem_type=Sistema eléctrico" \
+  -F "description=El auto no enciende y las luces del tablero parpadean" \
   -F "latitude=-17.7833" \
   -F "longitude=-63.1821" \
   -F "address=Av. Banzer y 4to anillo" \
   -F "zone=Norte" \
+  -F "nearest_workshop_id=14" \
+  -F "nearest_workshop_name=MecaApp" \
+  -F "nearest_workshop_specialty=Electricidad automotriz" \
+  -F "nearest_workshop_zone=Centro" \
+  -F "nearest_workshop_distance_meters=482.37" \
   -F "audio_duration_seconds=12.4" \
   -F "photos=@foto1.jpg" \
   -F "photos=@foto2.jpg" \
   -F "audio=@nota.m4a"
 ```
+
+Ejemplo con clasificacion automatica desde `Otro`:
+
+```bash
+curl -X POST http://localhost:8000/api/emergencias \
+  -F "client_id=4" \
+  -F "vehicle_name=Suzuki Swift" \
+  -F "vehicle_plate=5678XYZ" \
+  -F "problem_type=Otro" \
+  -F "description=Las llaves quedaron dentro del vehiculo" \
+  -F "address=Av. Banzer" \
+  -F "zone=Norte"
+```
+
+En ese caso, el backend conserva `problem_type=Otro` y normalmente guarda `problem_type_standardized=Cerrajería / llaves`.
 
 Registra un taller mecanico desde el formulario principal del frontend.
 

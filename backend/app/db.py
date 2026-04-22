@@ -93,6 +93,7 @@ CREATE_EMERGENCY_REPORTS_TABLE_SQL = text(
         vehicle_name VARCHAR(160) NOT NULL,
         vehicle_plate VARCHAR(40) NOT NULL,
         problem_type VARCHAR(120) NOT NULL,
+        problem_type_standardized VARCHAR(120),
         description TEXT,
         latitude DOUBLE PRECISION,
         longitude DOUBLE PRECISION,
@@ -104,6 +105,9 @@ CREATE_EMERGENCY_REPORTS_TABLE_SQL = text(
         nearest_workshop_zone VARCHAR(120),
         nearest_workshop_distance_meters DOUBLE PRECISION,
         audio_duration_seconds DOUBLE PRECISION,
+        audio_transcript TEXT,
+        audio_transcript_status VARCHAR(30),
+        audio_transcript_error TEXT,
         photo_paths TEXT NOT NULL DEFAULT '[]',
         photo_urls TEXT NOT NULL DEFAULT '[]',
         audio_path VARCHAR(255),
@@ -754,6 +758,7 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         vehicle_name,
         vehicle_plate,
         problem_type,
+        problem_type_standardized,
         description,
         latitude,
         longitude,
@@ -765,6 +770,9 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         nearest_workshop_zone,
         nearest_workshop_distance_meters,
         audio_duration_seconds,
+        audio_transcript,
+        audio_transcript_status,
+        audio_transcript_error,
         photo_paths,
         photo_urls,
         audio_path,
@@ -775,6 +783,7 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         :vehicle_name,
         :vehicle_plate,
         :problem_type,
+        :problem_type_standardized,
         :description,
         :latitude,
         :longitude,
@@ -786,6 +795,9 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         :nearest_workshop_zone,
         :nearest_workshop_distance_meters,
         :audio_duration_seconds,
+        :audio_transcript,
+        :audio_transcript_status,
+        :audio_transcript_error,
         :photo_paths,
         :photo_urls,
         :audio_path,
@@ -797,6 +809,7 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         vehicle_name,
         vehicle_plate,
         problem_type,
+        problem_type_standardized,
         description,
         latitude,
         longitude,
@@ -808,6 +821,9 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         nearest_workshop_zone,
         nearest_workshop_distance_meters,
         audio_duration_seconds,
+        audio_transcript,
+        audio_transcript_status,
+        audio_transcript_error,
         photo_paths,
         photo_urls,
         audio_path,
@@ -909,6 +925,9 @@ def init_database() -> None:
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS vehicle_name VARCHAR(160)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS vehicle_plate VARCHAR(40)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS problem_type VARCHAR(120)"))
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS problem_type_standardized VARCHAR(120)")
+        )
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS description TEXT"))
         connection.execute(text("ALTER TABLE emergency_reports ALTER COLUMN description DROP NOT NULL"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION"))
@@ -937,6 +956,13 @@ def init_database() -> None:
         )
         connection.execute(
             text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_duration_seconds DOUBLE PRECISION")
+        )
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_transcript TEXT"))
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_transcript_status VARCHAR(30)")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_transcript_error TEXT")
         )
         connection.execute(
             text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS photo_paths TEXT NOT NULL DEFAULT '[]'")

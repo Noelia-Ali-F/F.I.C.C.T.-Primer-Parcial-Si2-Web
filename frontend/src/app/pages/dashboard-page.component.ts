@@ -10,6 +10,16 @@ type TechnicianFilter = 'activos' | 'todos' | 'historial';
 type WorkshopApprovalStatus = 'pendiente' | 'activo' | 'rechazado';
 type ClientStatus = 'active' | 'suspended';
 
+const TECHNICIAN_SPECIALTY_OPTIONS = [
+  'Batería',
+  'Neumático',
+  'Combustible',
+  'Motor',
+  'Sistema eléctrico',
+  'Accidente',
+  'Cerrajería / llaves',
+];
+
 type DashboardStat = {
   label: string;
   value: string;
@@ -715,7 +725,12 @@ type AdminSession = {
 
                   <label class="technician-field">
                     <span>Especialidad</span>
-                    <input type="text" name="specialty" [(ngModel)]="technicianForm.specialty" required minlength="2" placeholder="Ej. Electricidad automotriz" />
+                    <select name="specialty" [(ngModel)]="technicianForm.specialty" required>
+                      <option value="" disabled>Selecciona una especialidad</option>
+                      <option *ngFor="let specialty of technicianSpecialtyOptions" [value]="specialty">
+                        {{ specialty }}
+                      </option>
+                    </select>
                   </label>
 
                   <label class="technician-field technician-field-wide">
@@ -1087,6 +1102,7 @@ type AdminSession = {
   styleUrl: './shared-pages.css',
 })
 export class DashboardPageComponent {
+  readonly technicianSpecialtyOptions = TECHNICIAN_SPECIALTY_OPTIONS;
   private readonly http = inject(HttpClient);
   private readonly router = inject(Router);
   private readonly workshopsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops`;

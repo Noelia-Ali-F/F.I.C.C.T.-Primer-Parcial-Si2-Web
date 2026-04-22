@@ -3,7 +3,11 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+import re
 import secrets
+import shutil
+from threading import Lock
+import unicodedata
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, status
@@ -11,6 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
 from sqlalchemy.exc import IntegrityError, OperationalError
+
+try:
+    import whisper
+except ImportError:
+    whisper = None
 
 from app.config import settings
 from app.db import (
@@ -69,6 +78,19 @@ MAX_EMERGENCY_PHOTO_BYTES = 20 * 1024 * 1024
 MAX_EMERGENCY_AUDIO_BYTES = 40 * 1024 * 1024
 ALLOWED_PHOTO_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_AUDIO_SUFFIXES = {".aac", ".m4a", ".mp3", ".wav", ".ogg", ".webm"}
+ALLOWED_EMERGENCY_PROBLEM_TYPES = {
+    "Batería",
+    "Neumático",
+    "Combustible",
+    "Motor",
+    "Sistema eléctrico",
+    "Accidente",
+    "Cerrajería / llaves",
+    "Otro",
+}
+STANDARDIZED_EMERGENCY_PROBLEM_TYPES = ALLOWED_EMERGENCY_PROBLEM_TYPES - {"Otro"}
+_whisper_model = None
+_whisper_model_lock = Lock()
 
 
 class WorkshopRegistrationCreate(BaseModel):
@@ -376,6 +398,7 @@ class EmergencyReportResponse(BaseModel):
     vehicle_name: str
     vehicle_plate: str
     problem_type: str
+    problem_type_standardized: str | None = None
     description: str | None = None
     latitude: float | None = None
     longitude: float | None = None
@@ -387,6 +410,9 @@ class EmergencyReportResponse(BaseModel):
     nearest_workshop_zone: str | None = None
     nearest_workshop_distance_meters: float | None = None
     audio_duration_seconds: float | None = None
+    audio_transcript: str | None = None
+    audio_transcript_status: str | None = None
+    audio_transcript_error: str | None = None
     photo_paths: list[str] = Field(default_factory=list)
     photo_urls: list[str] = Field(default_factory=list)
     audio_path: str | None = None
@@ -425,6 +451,119 @@ def normalize_optional_text(value: str | None) -> str | None:
 
     normalized = value.strip()
     return normalized or None
+
+
+def normalize_problem_type(problem_type: str) -> str:
+    normalized = problem_type.strip()
+
+    if normalized not in ALLOWED_EMERGENCY_PROBLEM_TYPES:
+        allowed_values = ", ".join(sorted(ALLOWED_EMERGENCY_PROBLEM_TYPES))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"problem_type invalido. Valores permitidos: {allowed_values}",
+        )
+
+    return normalized
+
+
+def normalize_text_for_matching(value: str | None) -> str:
+    if not value:
+        return ""
+
+    normalized = unicodedata.normalize("NFKD", value)
+    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
+    lowered = without_accents.lower()
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+def standardize_problem_type(
+    problem_type: str,
+    description: str | None,
+    audio_transcript: str | None = None,
+) -> str | None:
+    if problem_type != "Otro":
+        return problem_type if problem_type in STANDARDIZED_EMERGENCY_PROBLEM_TYPES else None
+
+    candidate_text = " ".join(
+        part for part in [normalize_optional_text(description), normalize_optional_text(audio_transcript)] if part
+    )
+    haystack = normalize_text_for_matching(candidate_text)
+
+    if not haystack:
+        return None
+
+    rules: list[tuple[str, tuple[str, ...]]] = [
+        ("Batería", ("bateria", "arranque", "no enciende", "sin corriente", "descargada", "pasar corriente")),
+        ("Neumático", ("neumatico", "llanta", "pinch", "rueda", "revent", "desinflad")),
+        ("Combustible", ("combustible", "gasolina", "diesel", "tanque", "sin gasolina", "sin diesel")),
+        ("Motor", ("motor", "sobrecalent", "humo", "temperatura", "radiador", "recalent")),
+        ("Sistema eléctrico", ("electrico", "eléctrico", "fusible", "cable", "corto", "tablero", "luces")),
+        ("Accidente", ("accidente", "choque", "colision", "colisión", "impacto", "atropell")),
+        ("Cerrajería / llaves", ("llave", "llaves", "cerrajer", "cerrajeria", "cerrado", "quedaron dentro")),
+    ]
+
+    best_match: str | None = None
+    best_score = 0
+
+    for category, keywords in rules:
+        score = sum(1 for keyword in keywords if keyword in haystack)
+        if score > best_score:
+            best_match = category
+            best_score = score
+
+    return best_match
+
+
+def get_whisper_model():
+    global _whisper_model
+
+    if _whisper_model is not None:
+        return _whisper_model
+
+    with _whisper_model_lock:
+        if _whisper_model is None:
+            if whisper is None:
+                raise RuntimeError("La dependencia openai-whisper no esta instalada")
+
+            _whisper_model = whisper.load_model(settings.whisper_model)
+
+    return _whisper_model
+
+
+def transcribe_emergency_audio(audio_relative_path: str | None) -> tuple[str | None, str | None, str | None]:
+    if not audio_relative_path:
+        return None, None, None
+
+    if not settings.whisper_enabled:
+        return None, "disabled", None
+
+    if shutil.which("ffmpeg") is None:
+        return None, "error", "ffmpeg no esta disponible en el contenedor"
+
+    absolute_path = (UPLOADS_ROOT / audio_relative_path).resolve()
+
+    try:
+        absolute_path.relative_to(UPLOADS_ROOT.resolve())
+    except ValueError:
+        return None, "error", "Ruta de audio invalida"
+
+    if not absolute_path.is_file():
+        return None, "error", "No se encontro el archivo de audio"
+
+    try:
+        model = get_whisper_model()
+        options: dict[str, object] = {"fp16": False}
+
+        language = normalize_optional_text(settings.whisper_language)
+        if language:
+            options["language"] = language
+
+        result = model.transcribe(str(absolute_path), **options)
+        transcript = normalize_optional_text(str(result.get("text", "")))
+        return transcript, "completed", None
+    except Exception as exc:
+        logger.exception("No se pudo transcribir el audio de la emergencia")
+        return None, "error", str(exc)
 
 
 def is_protected_admin_email(email: str) -> bool:
@@ -734,6 +873,9 @@ def register_emergency(
     photo_paths: list[str] = []
     photo_urls: list[str] = []
     audio_path: str | None = None
+    audio_transcript: str | None = None
+    audio_transcript_status: str | None = None
+    audio_transcript_error: str | None = None
 
     try:
         for photo in valid_photos:
@@ -742,12 +884,20 @@ def register_emergency(
             photo_urls.append(public_url)
 
         audio_path, audio_url = save_emergency_audio(audio)
+        audio_transcript, audio_transcript_status, audio_transcript_error = transcribe_emergency_audio(audio_path)
+        normalized_problem_type = normalize_problem_type(problem_type)
+        standardized_problem_type = standardize_problem_type(
+            normalized_problem_type,
+            description,
+            audio_transcript,
+        )
 
         payload = {
             "client_id": client_id,
             "vehicle_name": vehicle_name.strip(),
             "vehicle_plate": normalize_plate(vehicle_plate),
-            "problem_type": problem_type.strip(),
+            "problem_type": normalized_problem_type,
+            "problem_type_standardized": standardized_problem_type,
             "description": normalize_optional_text(description),
             "latitude": latitude,
             "longitude": longitude,
@@ -759,6 +909,9 @@ def register_emergency(
             "nearest_workshop_zone": normalize_optional_text(nearest_workshop_zone),
             "nearest_workshop_distance_meters": nearest_workshop_distance_meters,
             "audio_duration_seconds": audio_duration_seconds,
+            "audio_transcript": audio_transcript,
+            "audio_transcript_status": audio_transcript_status,
+            "audio_transcript_error": normalize_optional_text(audio_transcript_error),
             "photo_paths": json.dumps(photo_paths),
             "photo_urls": json.dumps(photo_urls),
             "audio_path": audio_path,

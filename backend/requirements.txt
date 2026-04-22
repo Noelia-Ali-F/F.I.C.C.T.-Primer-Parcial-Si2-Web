@@ -6,3 +6,4 @@ sqlalchemy>=2.0,<2.1
 psycopg[binary]>=3.2,<3.3
 email-validator>=2.2,<3.0
 python-multipart>=0.0.9,<0.1
+openai-whisper
