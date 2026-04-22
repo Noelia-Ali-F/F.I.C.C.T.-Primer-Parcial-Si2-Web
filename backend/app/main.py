@@ -381,6 +381,11 @@ class EmergencyReportResponse(BaseModel):
     longitude: float | None = None
     address: str | None = None
     zone: str | None = None
+    nearest_workshop_id: int | None = None
+    nearest_workshop_name: str | None = None
+    nearest_workshop_specialty: str | None = None
+    nearest_workshop_zone: str | None = None
+    nearest_workshop_distance_meters: float | None = None
     audio_duration_seconds: float | None = None
     photo_paths: list[str] = Field(default_factory=list)
     photo_urls: list[str] = Field(default_factory=list)
@@ -704,6 +709,11 @@ def register_emergency(
     longitude: float | None = Form(default=None, ge=-180, le=180),
     address: str | None = Form(default=None, max_length=255),
     zone: str | None = Form(default=None, max_length=120),
+    nearest_workshop_id: int | None = Form(default=None, ge=1),
+    nearest_workshop_name: str | None = Form(default=None, max_length=160),
+    nearest_workshop_specialty: str | None = Form(default=None, max_length=120),
+    nearest_workshop_zone: str | None = Form(default=None, max_length=120),
+    nearest_workshop_distance_meters: float | None = Form(default=None, ge=0),
     audio_duration_seconds: float | None = Form(default=None, ge=0),
     photos: list[UploadFile] = File(default=[]),
     audio: UploadFile | None = File(default=None),
@@ -743,6 +753,11 @@ def register_emergency(
             "longitude": longitude,
             "address": normalize_optional_text(address),
             "zone": normalize_optional_text(zone),
+            "nearest_workshop_id": nearest_workshop_id,
+            "nearest_workshop_name": normalize_optional_text(nearest_workshop_name),
+            "nearest_workshop_specialty": normalize_optional_text(nearest_workshop_specialty),
+            "nearest_workshop_zone": normalize_optional_text(nearest_workshop_zone),
+            "nearest_workshop_distance_meters": nearest_workshop_distance_meters,
             "audio_duration_seconds": audio_duration_seconds,
             "photo_paths": json.dumps(photo_paths),
             "photo_urls": json.dumps(photo_urls),

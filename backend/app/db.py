@@ -98,6 +98,11 @@ CREATE_EMERGENCY_REPORTS_TABLE_SQL = text(
         longitude DOUBLE PRECISION,
         address VARCHAR(255),
         zone VARCHAR(120),
+        nearest_workshop_id BIGINT,
+        nearest_workshop_name VARCHAR(160),
+        nearest_workshop_specialty VARCHAR(120),
+        nearest_workshop_zone VARCHAR(120),
+        nearest_workshop_distance_meters DOUBLE PRECISION,
         audio_duration_seconds DOUBLE PRECISION,
         photo_paths TEXT NOT NULL DEFAULT '[]',
         photo_urls TEXT NOT NULL DEFAULT '[]',
@@ -754,6 +759,11 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         longitude,
         address,
         zone,
+        nearest_workshop_id,
+        nearest_workshop_name,
+        nearest_workshop_specialty,
+        nearest_workshop_zone,
+        nearest_workshop_distance_meters,
         audio_duration_seconds,
         photo_paths,
         photo_urls,
@@ -770,6 +780,11 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         :longitude,
         :address,
         :zone,
+        :nearest_workshop_id,
+        :nearest_workshop_name,
+        :nearest_workshop_specialty,
+        :nearest_workshop_zone,
+        :nearest_workshop_distance_meters,
         :audio_duration_seconds,
         :photo_paths,
         :photo_urls,
@@ -787,6 +802,11 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         longitude,
         address,
         zone,
+        nearest_workshop_id,
+        nearest_workshop_name,
+        nearest_workshop_specialty,
+        nearest_workshop_zone,
+        nearest_workshop_distance_meters,
         audio_duration_seconds,
         photo_paths,
         photo_urls,
@@ -895,6 +915,26 @@ def init_database() -> None:
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS address VARCHAR(255)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS zone VARCHAR(120)"))
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS nearest_workshop_id BIGINT")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS nearest_workshop_name VARCHAR(160)")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS nearest_workshop_specialty VARCHAR(120)")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS nearest_workshop_zone VARCHAR(120)")
+        )
+        connection.execute(
+            text(
+                """
+                ALTER TABLE emergency_reports
+                ADD COLUMN IF NOT EXISTS nearest_workshop_distance_meters DOUBLE PRECISION
+                """
+            )
+        )
         connection.execute(
             text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_duration_seconds DOUBLE PRECISION")
         )
