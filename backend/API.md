@@ -560,6 +560,9 @@ Registra una solicitud de emergencia enviada desde la app movil usando `multipar
 - `vehicle_plate`: placa del vehiculo
 - `problem_type`: tipo de problema o emergencia
 - `problem_type_standardized`: calculado por backend a partir de `problem_type` y `description`; no es necesario enviarlo
+- `photo_problem_type_standardized`: calculado por backend desde las fotos cuando la clasificacion visual esta activada
+- `photo_classification_confidence`: confianza numerica de la clasificacion visual, entre `0.0` y `1.0`
+- `photo_classification_error`: detalle del error si la clasificacion visual falla o no esta configurada
 - `description`: opcional, descripcion detallada
 - `latitude`: opcional
 - `longitude`: opcional
@@ -587,6 +590,7 @@ Registra una solicitud de emergencia enviada desde la app movil usando `multipar
 
 Si `problem_type` es `Otro`, el cliente movil puede complementar el detalle en `description`.
 En ese caso, el backend intenta clasificarlo automaticamente a una de las 7 categorias estandarizadas y la guarda en `problem_type_standardized`.
+Si hay fotos y la clasificacion visual esta activada, el backend tambien intenta inferir `photo_problem_type_standardized` y usa esa sugerencia como apoyo cuando el texto no alcanza para decidir.
 
 #### Nombres de campos aceptados para archivos
 
@@ -617,6 +621,9 @@ Codigo: `201 Created`
   "vehicle_plate": "1234ABC",
   "problem_type": "Neumático",
   "problem_type_standardized": "Neumático",
+  "photo_problem_type_standardized": "Neumático",
+  "photo_classification_confidence": 0.93,
+  "photo_classification_error": null,
   "description": "La llanta delantera se vacio en plena avenida",
   "latitude": -17.7833,
   "longitude": -63.1821,
@@ -688,6 +695,14 @@ curl -X POST http://localhost:8000/api/emergencias \
 ```
 
 En ese caso, el backend conserva `problem_type=Otro` y normalmente guarda `problem_type_standardized=Cerrajería / llaves`.
+
+Activacion de clasificacion visual:
+
+- `PHOTO_CLASSIFICATION_ENABLED=true`
+- `PHOTO_CLASSIFICATION_MODEL=gpt-5-mini`
+- `OPENAI_API_KEY=<tu_api_key>`
+
+Si `PHOTO_CLASSIFICATION_ENABLED=false` o no existe `OPENAI_API_KEY`, la emergencia igual se registra y `photo_problem_type_standardized` queda vacio.
 
 Registra un taller mecanico desde el formulario principal del frontend.
 

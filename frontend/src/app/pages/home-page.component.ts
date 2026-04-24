@@ -291,19 +291,21 @@ export class HomePageComponent implements AfterViewInit {
   submitMessage = '';
 
   readonly workshopZones = [
-    'Equipetrol',
-    'Centro',
-    'Plan Tres Mil',
-    'Norte integrado',
-    'Doble vía a La Guardia',
+    'zona norte',
+    'zona sur',
+    'zona este',
+    'zona oeste',
+    'zona centro',
   ];
 
   readonly specialties = [
-    'Auxilio mecánico',
-    'Electricidad automotriz',
-    'Baterías y arranque',
-    'Cambio de neumáticos',
-    'Grúa y remolque',
+    'Batería',
+    'Neumático',
+    'Combustible',
+    'Motor',
+    'Sistema eléctrico',
+    'Accidente',
+    'Cerrajería / llaves',
   ];
 
   readonly benefits: HeroBenefit[] = [

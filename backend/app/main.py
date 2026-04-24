@@ -1,13 +1,17 @@
 from datetime import datetime
+import base64
 import hashlib
 import json
 import logging
+import mimetypes
+import os
 from pathlib import Path
 import re
 import secrets
 import shutil
 from threading import Lock
 import unicodedata
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, status
@@ -17,18 +21,25 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+try:
     import whisper
 except ImportError:
     whisper = None
 
 from app.config import settings
 from app.db import (
+    assign_emergency_technician,
     check_database_connection,
     create_client,
     create_emergency_report,
     create_technician,
     create_vehicle,
     create_workshop_registration,
+    delete_emergency_report,
     delete_client,
     delete_vehicle,
     delete_workshop_registration,
@@ -36,10 +47,12 @@ from app.db import (
     delete_technician_for_workshop,
     get_client_by_email,
     get_client_by_id,
+    get_technician_by_workshop,
     get_vehicle_by_id,
     get_workshop_by_id,
     get_workshop_by_email,
     init_database,
+    list_emergency_reports,
     list_clients,
     list_technicians,
     list_technicians_by_workshop,
@@ -48,6 +61,7 @@ from app.db import (
     update_client,
     update_client_password,
     update_client_status,
+    update_emergency_status,
     update_technician,
     update_technician_for_workshop,
     update_vehicle,
@@ -398,7 +412,11 @@ class EmergencyReportResponse(BaseModel):
     vehicle_name: str
     vehicle_plate: str
     problem_type: str
+    emergency_status: str | None = None
     problem_type_standardized: str | None = None
+    photo_problem_type_standardized: str | None = None
+    photo_classification_confidence: float | None = None
+    photo_classification_error: str | None = None
     description: str | None = None
     latitude: float | None = None
     longitude: float | None = None
@@ -418,6 +436,25 @@ class EmergencyReportResponse(BaseModel):
     audio_path: str | None = None
     audio_url: str | None = None
     created_at: datetime
+    assignment_id: int | None = None
+    assignment_status: str | None = None
+    assigned_technician_id: int | None = None
+    assigned_technician_name: str | None = None
+    assigned_technician_phone: str | None = None
+    assigned_technician_email: str | None = None
+    assigned_technician_specialty: str | None = None
+
+
+class EmergencyReportListResponse(EmergencyReportResponse):
+    client_name: str | None = None
+
+
+class EmergencyStatusUpdate(BaseModel):
+    emergency_status: str = Field(pattern="^(activo|rechazado)$")
+
+
+class EmergencyTechnicianAssignmentRequest(BaseModel):
+    technician_id: int = Field(ge=1)
 
 
 def hash_password(password: str) -> str:
@@ -480,6 +517,7 @@ def standardize_problem_type(
     problem_type: str,
     description: str | None,
     audio_transcript: str | None = None,
+    photo_problem_type_standardized: str | None = None,
 ) -> str | None:
     if problem_type != "Otro":
         return problem_type if problem_type in STANDARDIZED_EMERGENCY_PROBLEM_TYPES else None
@@ -511,7 +549,122 @@ def standardize_problem_type(
             best_match = category
             best_score = score
 
-    return best_match
+    if best_match is not None:
+        return best_match
+
+    if photo_problem_type_standardized in STANDARDIZED_EMERGENCY_PROBLEM_TYPES:
+        return photo_problem_type_standardized
+
+    return None
+
+
+def extract_response_text(response: object) -> str:
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+
+    output = getattr(response, "output", None)
+    if isinstance(output, list):
+        parts: list[str] = []
+        for item in output:
+            content = getattr(item, "content", None)
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                text = getattr(part, "text", None)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+        if parts:
+            return "\n".join(parts)
+
+    return ""
+
+
+def build_data_url_for_image(relative_path: str) -> str:
+    absolute_path = (UPLOADS_ROOT / relative_path).resolve()
+
+    try:
+        absolute_path.relative_to(UPLOADS_ROOT.resolve())
+    except ValueError as exc:
+        raise RuntimeError("Ruta de imagen invalida") from exc
+
+    if not absolute_path.is_file():
+        raise RuntimeError("No se encontro la imagen a clasificar")
+
+    mime_type, _ = mimetypes.guess_type(absolute_path.name)
+    mime_type = mime_type or "application/octet-stream"
+    encoded = base64.b64encode(absolute_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def classify_emergency_photos(photo_relative_paths: list[str]) -> tuple[str | None, float | None, str | None]:
+    if not photo_relative_paths or not settings.photo_classification_enabled:
+        return None, None, None
+
+    if OpenAI is None:
+        return None, None, "La dependencia openai no esta instalada"
+
+    if not os.getenv("OPENAI_API_KEY"):
+        return None, None, "OPENAI_API_KEY no esta configurada"
+
+    try:
+        content: list[dict[str, object]] = [
+            {
+                "type": "input_text",
+                "text": (
+                    "Clasifica estas fotos de una emergencia vehicular en exactamente una categoria. "
+                    "Categorias permitidas: Batería, Neumático, Combustible, Motor, Sistema eléctrico, "
+                    "Accidente, Cerrajería / llaves. "
+                    "Responde solo JSON con este formato exacto: "
+                    '{"category":"<categoria>","confidence":0.0,"reason":"<breve>"}'
+                ),
+            }
+        ]
+
+        for photo_relative_path in photo_relative_paths:
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": build_data_url_for_image(photo_relative_path),
+                    "detail": "low",
+                }
+            )
+
+        client = OpenAI()
+        response = client.responses.create(
+            model=settings.photo_classification_model,
+            input=[{"role": "user", "content": content}],
+        )
+        parsed = json.loads(extract_response_text(response))
+
+        category = parsed.get("category")
+        confidence_raw = parsed.get("confidence")
+
+        if category not in STANDARDIZED_EMERGENCY_PROBLEM_TYPES:
+            return None, None, "La clasificacion visual devolvio una categoria invalida"
+
+        confidence = None
+        if isinstance(confidence_raw, (int, float)):
+            confidence = max(0.0, min(float(confidence_raw), 1.0))
+
+        return str(category), confidence, None
+    except Exception as exc:
+        logger.exception("No se pudo clasificar visualmente la emergencia")
+        return None, None, str(exc)
+
+
+def determine_standardized_problem_type(
+    problem_type: str,
+    description: str | None,
+    audio_transcript: str | None = None,
+    photo_problem_type_standardized: str | None = None,
+) -> str | None:
+    return standardize_problem_type(
+        problem_type=problem_type,
+        description=description,
+        audio_transcript=audio_transcript,
+        photo_problem_type_standardized=photo_problem_type_standardized,
+    )
 
 
 def get_whisper_model():
@@ -718,6 +871,60 @@ def parse_json_string_list(value: object) -> list[str]:
     return []
 
 
+def relative_upload_path_from_url(value: str | None) -> str | None:
+    normalized = normalize_optional_text(value)
+
+    if not normalized:
+        return None
+
+    parsed_path = urlparse(normalized).path if normalized.startswith(("http://", "https://")) else normalized
+    parsed_path = parsed_path.lstrip("/")
+
+    if parsed_path.startswith("uploads/"):
+        parsed_path = parsed_path.removeprefix("uploads/")
+
+    if not parsed_path:
+        return None
+
+    candidate = (UPLOADS_ROOT / parsed_path).resolve()
+
+    try:
+        candidate.relative_to(UPLOADS_ROOT.resolve())
+    except ValueError:
+        return None
+
+    return parsed_path if candidate.is_file() else None
+
+
+def existing_upload_urls_from_media_lists(photo_paths: object, photo_urls: object) -> tuple[list[str], list[str]]:
+    existing_paths: list[str] = []
+
+    for raw_value in [*parse_json_string_list(photo_paths), *parse_json_string_list(photo_urls)]:
+        relative_path = relative_upload_path_from_url(raw_value)
+
+        if relative_path and relative_path not in existing_paths:
+            existing_paths.append(relative_path)
+
+    return existing_paths, [build_public_upload_url(relative_path) for relative_path in existing_paths]
+
+
+def normalize_emergency_media_fields(row: dict[str, object]) -> dict[str, object]:
+    existing_photo_paths, existing_photo_urls = existing_upload_urls_from_media_lists(
+        row.get("photo_paths"),
+        row.get("photo_urls"),
+    )
+    row["photo_paths"] = existing_photo_paths
+    row["photo_urls"] = existing_photo_urls
+
+    audio_path = relative_upload_path_from_url(str(row.get("audio_path"))) if row.get("audio_path") else None
+    audio_url_path = relative_upload_path_from_url(str(row.get("audio_url"))) if row.get("audio_url") else None
+    existing_audio_path = audio_path or audio_url_path
+    row["audio_path"] = existing_audio_path
+    row["audio_url"] = build_public_upload_url(existing_audio_path) if existing_audio_path else None
+
+    return row
+
+
 app = FastAPI(
     title=settings.app_name,
     debug=settings.app_debug,
@@ -876,6 +1083,9 @@ def register_emergency(
     audio_transcript: str | None = None
     audio_transcript_status: str | None = None
     audio_transcript_error: str | None = None
+    photo_problem_type_standardized: str | None = None
+    photo_classification_confidence: float | None = None
+    photo_classification_error: str | None = None
 
     try:
         for photo in valid_photos:
@@ -885,11 +1095,17 @@ def register_emergency(
 
         audio_path, audio_url = save_emergency_audio(audio)
         audio_transcript, audio_transcript_status, audio_transcript_error = transcribe_emergency_audio(audio_path)
+        (
+            photo_problem_type_standardized,
+            photo_classification_confidence,
+            photo_classification_error,
+        ) = classify_emergency_photos(photo_paths)
         normalized_problem_type = normalize_problem_type(problem_type)
-        standardized_problem_type = standardize_problem_type(
-            normalized_problem_type,
-            description,
-            audio_transcript,
+        standardized_problem_type = determine_standardized_problem_type(
+            problem_type=normalized_problem_type,
+            description=description,
+            audio_transcript=audio_transcript,
+            photo_problem_type_standardized=photo_problem_type_standardized,
         )
 
         payload = {
@@ -897,7 +1113,11 @@ def register_emergency(
             "vehicle_name": vehicle_name.strip(),
             "vehicle_plate": normalize_plate(vehicle_plate),
             "problem_type": normalized_problem_type,
+            "emergency_status": "pendiente",
             "problem_type_standardized": standardized_problem_type,
+            "photo_problem_type_standardized": photo_problem_type_standardized,
+            "photo_classification_confidence": photo_classification_confidence,
+            "photo_classification_error": normalize_optional_text(photo_classification_error),
             "description": normalize_optional_text(description),
             "latitude": latitude,
             "longitude": longitude,
@@ -929,9 +1149,160 @@ def register_emergency(
             detail="Base de datos no disponible",
         ) from exc
 
-    created["photo_paths"] = parse_json_string_list(created.get("photo_paths"))
-    created["photo_urls"] = parse_json_string_list(created.get("photo_urls"))
+    normalize_emergency_media_fields(created)
     return EmergencyReportResponse.model_validate(created)
+
+
+@app.get(
+    f"{settings.api_prefix}/emergencias",
+    response_model=list[EmergencyReportListResponse],
+)
+def get_emergency_reports(
+    nearest_workshop_id: int | None = Query(default=None, ge=1),
+    emergency_status: str | None = Query(default=None, pattern="^(pendiente|activo|rechazado)$"),
+) -> list[EmergencyReportListResponse]:
+    try:
+        rows = list_emergency_reports(
+            nearest_workshop_id=nearest_workshop_id,
+            emergency_status=emergency_status,
+        )
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    for row in rows:
+        normalize_emergency_media_fields(row)
+
+    return [EmergencyReportListResponse.model_validate(row) for row in rows]
+
+
+@app.put(
+    f"{settings.api_prefix}/emergencias/{{report_id}}/status",
+    response_model=EmergencyReportResponse,
+)
+def edit_emergency_status(
+    report_id: int,
+    payload: EmergencyStatusUpdate,
+    workshop_id: int | None = Query(default=None, ge=1),
+) -> EmergencyReportResponse:
+    if payload.emergency_status == "activo" and workshop_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo un taller puede cambiar una emergencia a activo",
+        )
+
+    try:
+        updated = update_emergency_status(
+            report_id,
+            payload.emergency_status,
+            nearest_workshop_id=workshop_id,
+        )
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Emergencia no encontrada o no pertenece al taller indicado",
+        )
+
+    normalize_emergency_media_fields(updated)
+    return EmergencyReportResponse.model_validate(updated)
+
+
+@app.put(
+    f"{settings.api_prefix}/emergencias/{{report_id}}/technician-assignment",
+    response_model=EmergencyReportListResponse,
+)
+def assign_technician_to_emergency(
+    report_id: int,
+    payload: EmergencyTechnicianAssignmentRequest,
+    workshop_id: int = Query(ge=1),
+) -> EmergencyReportListResponse:
+    try:
+        technician = get_technician_by_workshop(payload.technician_id, workshop_id)
+        workshop_reports = list_emergency_reports(nearest_workshop_id=workshop_id)
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    if not technician:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tecnico no encontrado para este taller",
+        )
+
+    report = next((item for item in workshop_reports if int(item["id"]) == report_id), None)
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Emergencia no encontrada o no pertenece a este taller",
+        )
+
+    if report.get("emergency_status") != "activo":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Primero debes aceptar la emergencia para asignar un tecnico",
+        )
+
+    current_assigned_technician_id = report.get("assigned_technician_id")
+    technician_status = str(technician.get("status"))
+    if technician_status != "disponible" and current_assigned_technician_id != payload.technician_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El tecnico seleccionado no esta disponible",
+        )
+
+    try:
+        assign_emergency_technician(report_id, workshop_id, payload.technician_id)
+        refreshed_reports = list_emergency_reports(nearest_workshop_id=workshop_id)
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    updated_report = next((item for item in refreshed_reports if int(item["id"]) == report_id), None)
+
+    if not updated_report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Emergencia no encontrada")
+
+    normalize_emergency_media_fields(updated_report)
+    return EmergencyReportListResponse.model_validate(updated_report)
+
+
+@app.delete(
+    f"{settings.api_prefix}/emergencias/{{report_id}}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_emergency_report(
+    report_id: int,
+    workshop_id: int | None = Query(default=None, ge=1),
+) -> None:
+    try:
+        deleted = delete_emergency_report(
+            report_id,
+            nearest_workshop_id=workshop_id,
+        )
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Emergencia no encontrada o no pertenece al taller indicado",
+        )
 
 
 @app.get(

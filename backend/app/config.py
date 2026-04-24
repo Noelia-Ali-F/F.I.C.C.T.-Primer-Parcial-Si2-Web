@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     whisper_enabled: bool = True
     whisper_model: str = "base"
     whisper_language: str | None = "es"
+    photo_classification_enabled: bool = False
+    photo_classification_model: str = "gpt-5-mini"
 
     model_config = SettingsConfigDict(
         env_file=".env",

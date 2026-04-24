@@ -1,8 +1,11 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { Component, inject } from '@angular/core';
+import { Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+
+declare const L: any;
 
 type DashboardSection = 'dashboard' | 'workshops' | 'technicians' | 'clients' | 'maintenance' | 'emergencies';
 type TechnicianStatus = 'disponible' | 'ocupado' | 'fuera_de_servicio';
@@ -11,6 +14,24 @@ type WorkshopApprovalStatus = 'pendiente' | 'activo' | 'rechazado';
 type ClientStatus = 'active' | 'suspended';
 
 const TECHNICIAN_SPECIALTY_OPTIONS = [
+  'Batería',
+  'Neumático',
+  'Combustible',
+  'Motor',
+  'Sistema eléctrico',
+  'Accidente',
+  'Cerrajería / llaves',
+];
+
+const WORKSHOP_ZONE_OPTIONS = [
+  'zona norte',
+  'zona sur',
+  'zona este',
+  'zona oeste',
+  'zona centro',
+];
+
+const WORKSHOP_SPECIALTY_OPTIONS = [
   'Batería',
   'Neumático',
   'Combustible',
@@ -46,6 +67,57 @@ type MaintenanceRequest = {
   distance: string;
   detail: string;
   reportedAt: string;
+  latitude: number | null;
+  longitude: number | null;
+  nearestWorkshopId: number | null;
+  nearestWorkshopName: string | null;
+  problemType: string;
+  standardizedProblemType: string | null;
+  clientDescription: string | null;
+  audioTranscript: string | null;
+  photoUrls: string[];
+  audioUrl: string | null;
+  mapEmbedUrl: SafeResourceUrl | null;
+  mapExternalUrl: string | null;
+  assignmentId: number | null;
+  assignmentStatus: string | null;
+  assignedTechnicianId: number | null;
+  assignedTechnicianName: string | null;
+  assignedTechnicianPhone: string | null;
+  assignedTechnicianSpecialty: string | null;
+};
+
+type EmergencyReport = {
+  id: number;
+  client_id: number | null;
+  client_name: string | null;
+  vehicle_name: string;
+  vehicle_plate: string;
+  problem_type: string;
+  emergency_status: 'pendiente' | 'activo' | 'rechazado' | null;
+  problem_type_standardized: string | null;
+  description: string | null;
+  audio_transcript: string | null;
+  photo_paths?: string[] | string | null;
+  photo_urls: string[] | string | null;
+  audio_url: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  address: string | null;
+  zone: string | null;
+  nearest_workshop_id: number | null;
+  nearest_workshop_name: string | null;
+  nearest_workshop_specialty: string | null;
+  nearest_workshop_zone: string | null;
+  nearest_workshop_distance_meters: number | null;
+  assignment_id: number | null;
+  assignment_status: string | null;
+  assigned_technician_id: number | null;
+  assigned_technician_name: string | null;
+  assigned_technician_phone: string | null;
+  assigned_technician_email: string | null;
+  assigned_technician_specialty: string | null;
+  created_at: string;
 };
 
 type WorkshopRegistration = {
@@ -115,6 +187,8 @@ type WorkshopFormModel = {
   email: string;
   zone: string;
   specialty: string;
+  latitude: number | null;
+  longitude: number | null;
   password: string;
 };
 
@@ -167,7 +241,7 @@ type AdminSession = {
               (click)="selectSection('workshops')"
             >
               <span class="dashboard-menu-icon">◫</span>
-              <span>Solicitudes</span>
+              <span>Taller</span>
               <span class="dashboard-menu-badge">Live</span>
             </button>
 
@@ -179,7 +253,7 @@ type AdminSession = {
                 (click)="selectSection('workshops')"
               >
                 <span class="dashboard-submenu-bullet"></span>
-                <span>Taller</span>
+                <span>Solicitudes</span>
                 <strong>{{ workshops.length | number: '2.0-0' }}</strong>
               </button>
             </div>
@@ -407,58 +481,95 @@ type AdminSession = {
                 <p class="dashboard-panel-kicker">Gestión de emergencias</p>
                 <h2>Solicitudes de Emergencia</h2>
               </div>
-              <button class="dashboard-refresh-button" type="button" (click)="clearMaintenanceSearch()">
-                Limpiar filtros
-              </button>
-            </div>
-
-            <div class="maintenance-toolbar">
-              <label class="maintenance-search">
-                <span>Buscar por ID, cliente, vehículo o ubicación</span>
-                <input
-                  type="search"
-                  [(ngModel)]="maintenanceSearch"
-                  placeholder="Buscar..."
-                />
-              </label>
-
-              <div class="maintenance-filter-buttons">
-                <button
-                  type="button"
-                  class="dashboard-secondary-button"
-                  [class.is-active]="maintenanceFilter === 'todas'"
-                  (click)="setMaintenanceFilter('todas')"
-                >
-                  Todas
+              <div class="dashboard-toolbar">
+                <button class="dashboard-refresh-button" type="button" (click)="loadEmergencies()">
+                  Actualizar
                 </button>
-                <button
-                  type="button"
-                  class="dashboard-secondary-button"
-                  [class.is-active]="maintenanceFilter === 'pendiente'"
-                  (click)="setMaintenanceFilter('pendiente')"
-                >
-                  Pendiente
-                </button>
-                <button
-                  type="button"
-                  class="dashboard-secondary-button"
-                  [class.is-active]="maintenanceFilter === 'activo'"
-                  (click)="setMaintenanceFilter('activo')"
-                >
-                  Activa
-                </button>
-                <button
-                  type="button"
-                  class="dashboard-secondary-button"
-                  [class.is-active]="maintenanceFilter === 'rechazado'"
-                  (click)="setMaintenanceFilter('rechazado')"
-                >
-                  Rechazado
+                <button class="dashboard-refresh-button" type="button" (click)="clearMaintenanceSearch()">
+                  Limpiar filtros
                 </button>
               </div>
             </div>
 
-            <div class="maintenance-layout">
+            <p class="dashboard-loading" *ngIf="isEmergenciesLoading">Cargando solicitudes de emergencia...</p>
+            <p class="dashboard-empty" *ngIf="!isEmergenciesLoading && !maintenanceRequests.length">
+              {{ isWorkshopSession ? 'No hay emergencias pendientes asignadas a este taller.' : 'Aún no hay solicitudes de emergencia registradas.' }}
+            </p>
+
+            <section class="maintenance-topbar" *ngIf="!isEmergenciesLoading && maintenanceRequests.length">
+              <article class="maintenance-summary-card maintenance-summary-card-compact">
+                <div class="maintenance-summary-head">
+                  <div>
+                    <p class="dashboard-panel-kicker">Resumen Taller</p>
+                    <h2>Panel rápido</h2>
+                  </div>
+                  <span class="maintenance-summary-total">{{ maintenanceRequestsFiltered.length }}</span>
+                </div>
+                <div class="maintenance-summary-list maintenance-summary-list-compact">
+                  <div class="maintenance-summary-item" *ngFor="let item of maintenanceSummaryCounts">
+                    <strong>{{ item.value }}</strong>
+                    <span>{{ item.label }}</span>
+                  </div>
+                </div>
+              </article>
+
+              <div class="maintenance-toolbar maintenance-toolbar-compact">
+                <div class="maintenance-toolbar-actions">
+                  <button class="dashboard-refresh-button" type="button" (click)="loadEmergencies()">
+                    Actualizar
+                  </button>
+                  <button class="dashboard-secondary-button" type="button" (click)="clearMaintenanceSearch()">
+                    Limpiar
+                  </button>
+                </div>
+
+                <label class="maintenance-search">
+                  <span>Buscar por ID, cliente, vehículo o ubicación</span>
+                  <input
+                    type="search"
+                    [(ngModel)]="maintenanceSearch"
+                    placeholder="Buscar..."
+                  />
+                </label>
+
+                <div class="maintenance-filter-buttons">
+                  <button
+                    type="button"
+                    class="dashboard-secondary-button"
+                    [class.is-active]="maintenanceFilter === 'todas'"
+                    (click)="setMaintenanceFilter('todas')"
+                  >
+                    Todas
+                  </button>
+                  <button
+                    type="button"
+                    class="dashboard-secondary-button"
+                    [class.is-active]="maintenanceFilter === 'pendiente'"
+                    (click)="setMaintenanceFilter('pendiente')"
+                  >
+                    Pendiente
+                  </button>
+                  <button
+                    type="button"
+                    class="dashboard-secondary-button"
+                    [class.is-active]="maintenanceFilter === 'activo'"
+                    (click)="setMaintenanceFilter('activo')"
+                  >
+                    Activa
+                  </button>
+                  <button
+                    type="button"
+                    class="dashboard-secondary-button"
+                    [class.is-active]="maintenanceFilter === 'rechazado'"
+                    (click)="setMaintenanceFilter('rechazado')"
+                  >
+                    Rechazado
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <div class="maintenance-layout" *ngIf="!isEmergenciesLoading && maintenanceRequests.length">
               <div class="maintenance-list-column">
                 <div
                   class="maintenance-request-card"
@@ -480,6 +591,62 @@ type AdminSession = {
                     </p>
                     <p class="maintenance-request-detail">{{ request.detail }}</p>
                   </div>
+
+                  <div class="maintenance-request-media" (click)="$event.stopPropagation()">
+                    <div class="maintenance-request-map-preview" *ngIf="request.mapEmbedUrl; else requestNoMap">
+                      <iframe
+                        [src]="request.mapEmbedUrl"
+                        loading="lazy"
+                        referrerpolicy="no-referrer-when-downgrade"
+                        title="Mapa de la emergencia"
+                      ></iframe>
+                      <a
+                        *ngIf="request.mapExternalUrl"
+                        [href]="request.mapExternalUrl"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Abrir mapa
+                      </a>
+                    </div>
+                    <ng-template #requestNoMap>
+                      <div class="maintenance-request-media-empty">
+                        Mapa no disponible: esta solicitud no incluye coordenadas.
+                      </div>
+                    </ng-template>
+
+                    <div class="maintenance-request-media-grid">
+                      <div class="maintenance-request-audio-preview">
+                        <strong>Audio</strong>
+                        <audio
+                          *ngIf="request.audioUrl; else requestNoAudio"
+                          controls
+                          [src]="request.audioUrl"
+                        ></audio>
+                        <ng-template #requestNoAudio>
+                          <span>Sin audio enviado.</span>
+                        </ng-template>
+                      </div>
+
+                      <div class="maintenance-request-photo-preview">
+                        <strong>Imágenes enviadas por el cliente ({{ request.photoUrls.length }})</strong>
+                        <div class="maintenance-request-photo-strip" *ngIf="request.photoUrls.length; else requestNoPhotos">
+                          <a
+                            *ngFor="let photoUrl of request.photoUrls"
+                            [href]="photoUrl"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <img [src]="photoUrl" alt="Foto de la emergencia" loading="lazy" />
+                          </a>
+                        </div>
+                        <ng-template #requestNoPhotos>
+                          <span>Sin fotos enviadas.</span>
+                        </ng-template>
+                      </div>
+                    </div>
+                  </div>
+
                   <div class="maintenance-request-footer">
                     <span class="maintenance-request-status" [attr.data-status]="request.status">
                       {{ request.status | titlecase }}
@@ -488,50 +655,6 @@ type AdminSession = {
                   </div>
                 </div>
               </div>
-
-              <aside class="maintenance-summary-column">
-                <section class="maintenance-summary-card">
-                  <div class="dashboard-panel-head">
-                    <div>
-                      <p class="dashboard-panel-kicker">Resumen Taller</p>
-                      <h2>Resumen Taller</h2>
-                    </div>
-                  </div>
-                  <div class="maintenance-summary-list">
-                    <div class="maintenance-summary-item" *ngFor="let item of maintenanceSummaryCounts">
-                      <strong>{{ item.value }}</strong>
-                      <span>{{ item.label }}</span>
-                    </div>
-                  </div>
-                </section>
-
-                <section class="maintenance-map-card">
-                  <div class="dashboard-panel-head">
-                    <div>
-                      <p class="dashboard-panel-kicker">Mapa</p>
-                      <h2>Ubicación</h2>
-                    </div>
-                  </div>
-                  <div class="maintenance-map-placeholder">
-                    <span>Mapa en construcción</span>
-                  </div>
-                </section>
-
-                <section class="maintenance-detail-card" *ngIf="selectedMaintenanceRequest">
-                  <div class="dashboard-panel-head">
-                    <div>
-                      <p class="dashboard-panel-kicker">Detalle de emergencia</p>
-                      <h2>{{ selectedMaintenanceRequest.code }}</h2>
-                    </div>
-                  </div>
-                  <p><strong>Cliente:</strong> {{ selectedMaintenanceRequest.client }}</p>
-                  <p><strong>Vehículo:</strong> {{ selectedMaintenanceRequest.vehicle }}</p>
-                  <p><strong>Ubicación:</strong> {{ selectedMaintenanceRequest.location }}</p>
-                  <p><strong>Prioridad:</strong> {{ selectedMaintenanceRequest.priority }}</p>
-                  <p><strong>Estado:</strong> {{ selectedMaintenanceRequest.status | titlecase }}</p>
-                  <p>{{ selectedMaintenanceRequest.detail }}</p>
-                </section>
-              </aside>
             </div>
           </article>
 
@@ -950,19 +1073,69 @@ type AdminSession = {
             </label>
 
             <label class="workshop-edit-field">
+              <span>Correo Electrónico</span>
+              <input
+                type="email"
+                name="email"
+                [(ngModel)]="workshopForm.email"
+                required
+              />
+            </label>
+
+            <label class="workshop-edit-field">
               <span>Zona</span>
-              <input type="text" name="zone" [(ngModel)]="workshopForm.zone" required minlength="2" />
+              <select name="zone" [(ngModel)]="workshopForm.zone" required>
+                <option value="" disabled>Selecciona una zona</option>
+                <option *ngFor="let zone of workshopZoneOptions" [value]="zone">{{ zone }}</option>
+              </select>
             </label>
 
             <label class="workshop-edit-field workshop-edit-field-wide">
               <span>Especialidad</span>
-              <input
-                type="text"
-                name="specialty"
-                [(ngModel)]="workshopForm.specialty"
-                required
-                minlength="2"
-              />
+              <select name="specialty" [(ngModel)]="workshopForm.specialty" required>
+                <option value="" disabled>Selecciona una especialidad</option>
+                <option *ngFor="let specialty of workshopSpecialtyOptions" [value]="specialty">
+                  {{ specialty }}
+                </option>
+              </select>
+            </label>
+
+            <label class="workshop-edit-field workshop-edit-field-wide">
+              <span>Ubicación del Taller</span>
+              <div class="workshop-edit-map-field">
+                <button
+                  class="workshop-edit-map-locate-button"
+                  type="button"
+                  (click)="locateWorkshopEditCurrentPosition()"
+                  [disabled]="isWorkshopLocationLocating"
+                  [attr.aria-label]="
+                    isWorkshopLocationLocating ? 'Obteniendo ubicación actual' : 'Usar ubicación actual'
+                  "
+                  [title]="
+                    isWorkshopLocationLocating
+                      ? 'Ubicando...'
+                      : isSecureContext
+                        ? 'Usar ubicación actual'
+                        : 'La ubicación automática requiere HTTPS o localhost'
+                  "
+                >
+                  ⌖
+                </button>
+                <div
+                  #workshopEditMapCanvas
+                  class="workshop-edit-map-canvas"
+                  aria-label="Mapa interactivo de ubicación del taller"
+                ></div>
+              </div>
+              <div class="workshop-edit-map-meta">
+                <small>Haz clic en el mapa o arrastra el marcador para actualizar la ubicación.</small>
+                <strong>
+                  Lat: {{ formatCoordinate(workshopForm.latitude) }} | Lng: {{ formatCoordinate(workshopForm.longitude) }}
+                </strong>
+                <span class="workshop-edit-map-status error" *ngIf="workshopLocationMessage">
+                  {{ workshopLocationMessage }}
+                </span>
+              </div>
             </label>
 
             <label class="workshop-edit-field workshop-edit-field-wide">
@@ -1097,17 +1270,219 @@ type AdminSession = {
           </div>
         </section>
       </div>
+
+      <div class="dashboard-modal-backdrop" *ngIf="showEmergencyModal && selectedMaintenanceRequest" (click)="closeEmergencyModal()">
+        <section class="dashboard-modal-card emergency-modal-card" (click)="$event.stopPropagation()">
+          <div class="dashboard-panel-head">
+            <div>
+              <p class="dashboard-panel-kicker">Emergencia seleccionada</p>
+              <h2>{{ selectedMaintenanceRequest.code }}</h2>
+            </div>
+            <button class="dashboard-secondary-button" type="button" (click)="closeEmergencyModal()">
+              Cerrar
+            </button>
+          </div>
+
+          <section class="maintenance-map-card">
+            <div class="dashboard-panel-head">
+              <div>
+                <p class="dashboard-panel-kicker">Mapa</p>
+                <h2>Ubicación</h2>
+              </div>
+            </div>
+            <div class="maintenance-map-shell">
+              <div #emergencyMapCanvas class="maintenance-map-canvas" aria-label="Mapa de la emergencia"></div>
+              <div class="maintenance-map-overlay" *ngIf="!selectedEmergencyHasCoordinates">
+                La emergencia seleccionada no tiene coordenadas disponibles.
+              </div>
+            </div>
+            <p
+              class="maintenance-map-legend"
+              *ngIf="selectedMaintenanceRequest.nearestWorkshopName && selectedEmergencyHasCoordinates"
+            >
+              Ruta visual entre el cliente y el taller asignado:
+              <strong>{{ selectedMaintenanceRequest.nearestWorkshopName }}</strong>
+            </p>
+          </section>
+
+          <section class="maintenance-detail-card">
+            <div class="dashboard-panel-head">
+              <div>
+                <p class="dashboard-panel-kicker">Detalle de emergencia</p>
+                <h2>{{ selectedMaintenanceRequest.code }}</h2>
+              </div>
+            </div>
+            <div class="emergency-detail-grid">
+              <p><strong>Cliente:</strong> {{ selectedMaintenanceRequest.client }}</p>
+              <p><strong>Vehículo:</strong> {{ selectedMaintenanceRequest.vehicle }}</p>
+              <p><strong>Ubicación:</strong> {{ selectedMaintenanceRequest.location }}</p>
+              <p *ngIf="selectedMaintenanceRequest.nearestWorkshopName">
+                <strong>Taller asignado:</strong> {{ selectedMaintenanceRequest.nearestWorkshopName }}
+              </p>
+              <p><strong>Prioridad:</strong> {{ selectedMaintenanceRequest.priority }}</p>
+              <p><strong>Estado:</strong> {{ selectedMaintenanceRequest.status | titlecase }}</p>
+              <p><strong>Tipo reportado:</strong> {{ selectedMaintenanceRequest.problemType }}</p>
+              <p *ngIf="selectedMaintenanceRequest.standardizedProblemType">
+                <strong>Tipo estandarizado:</strong> {{ selectedMaintenanceRequest.standardizedProblemType }}
+              </p>
+            </div>
+
+            <div class="emergency-detail-block">
+              <strong>Resumen operativo</strong>
+              <p>{{ selectedMaintenanceRequest.detail }}</p>
+            </div>
+
+            <div class="emergency-detail-block" *ngIf="selectedMaintenanceRequest.clientDescription">
+              <strong>Descripción escrita por el cliente</strong>
+              <p>{{ selectedMaintenanceRequest.clientDescription }}</p>
+            </div>
+
+            <div class="emergency-detail-block" *ngIf="selectedMaintenanceRequest.audioTranscript">
+              <strong>Transcripción del audio</strong>
+              <p>{{ selectedMaintenanceRequest.audioTranscript }}</p>
+            </div>
+
+            <div class="emergency-detail-block">
+              <strong>Audio enviado</strong>
+              <audio
+                *ngIf="selectedMaintenanceRequest.audioUrl; else noEmergencyAudio"
+                controls
+                [src]="selectedMaintenanceRequest.audioUrl"
+                class="emergency-audio-player"
+              ></audio>
+              <ng-template #noEmergencyAudio>
+                <p class="emergency-empty-media">Esta emergencia no incluye audio.</p>
+              </ng-template>
+            </div>
+
+            <div class="emergency-detail-block">
+              <strong>Imágenes enviadas por el cliente</strong>
+              <div class="emergency-photo-grid" *ngIf="selectedMaintenancePhotoUrls.length; else noEmergencyPhotos">
+                <a
+                  class="emergency-photo-item"
+                  *ngFor="let photoUrl of selectedMaintenancePhotoUrls"
+                  [href]="photoUrl"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <img [src]="photoUrl" alt="Imagen enviada por el cliente para la emergencia" />
+                </a>
+              </div>
+              <ng-template #noEmergencyPhotos>
+                <p class="emergency-empty-media">Esta emergencia no incluye imágenes.</p>
+              </ng-template>
+            </div>
+
+            <div class="emergency-detail-block emergency-assignment-block" *ngIf="isWorkshopSession">
+              <strong>Asignación de técnico</strong>
+              <p *ngIf="selectedMaintenanceRequest.assignedTechnicianName; else noAssignedTechnician">
+                Técnico asignado:
+                <strong>{{ selectedMaintenanceRequest.assignedTechnicianName }}</strong>
+                <span *ngIf="selectedMaintenanceRequest.assignedTechnicianPhone">
+                  · {{ selectedMaintenanceRequest.assignedTechnicianPhone }}
+                </span>
+              </p>
+              <ng-template #noAssignedTechnician>
+                <p>
+                  {{
+                    selectedMaintenanceRequest.status === 'activo'
+                      ? 'Selecciona un técnico disponible para enviar asistencia.'
+                      : 'Primero acepta la emergencia para habilitar la asignación.'
+                  }}
+                </p>
+              </ng-template>
+
+              <div class="emergency-assignment-controls" *ngIf="selectedMaintenanceRequest.status === 'activo'">
+                <label class="technician-field">
+                  <span>Técnico disponible</span>
+                  <select [(ngModel)]="selectedEmergencyTechnicianId" name="selectedEmergencyTechnicianId">
+                    <option [ngValue]="null">Seleccionar técnico</option>
+                    <option *ngFor="let technician of assignableTechnicians" [ngValue]="technician.id">
+                      {{ technician.full_name }} · {{ technician.specialty }} · {{ statusLabel(technician.status) }}
+                    </option>
+                  </select>
+                </label>
+                <button
+                  class="dashboard-refresh-button"
+                  type="button"
+                  (click)="assignSelectedEmergencyTechnician()"
+                  [disabled]="isAssigningEmergencyTechnician || !selectedEmergencyTechnicianId"
+                >
+                  {{ isAssigningEmergencyTechnician ? 'Asignando...' : 'Asignar técnico' }}
+                </button>
+              </div>
+
+              <p class="technician-form-feedback" *ngIf="emergencyAssignmentFeedback">
+                {{ emergencyAssignmentFeedback }}
+              </p>
+            </div>
+          </section>
+
+          <div class="emergency-modal-actions">
+            <ng-container *ngIf="isWorkshopSession; else adminEmergencyActions">
+              <button
+                class="dashboard-refresh-button"
+                type="button"
+                (click)="updateSelectedEmergencyStatus('activo')"
+                [disabled]="isUpdatingEmergencyStatus"
+              >
+                {{ isUpdatingEmergencyStatus ? 'Actualizando...' : 'Aceptar' }}
+              </button>
+              <button
+                class="client-delete-confirm-button"
+                type="button"
+                (click)="updateSelectedEmergencyStatus('rechazado')"
+                [disabled]="isUpdatingEmergencyStatus"
+              >
+                Rechazar
+              </button>
+            </ng-container>
+            <ng-template #adminEmergencyActions>
+              <button
+                class="client-delete-confirm-button"
+                type="button"
+                (click)="updateSelectedEmergencyStatus('rechazado')"
+                [disabled]="isUpdatingEmergencyStatus"
+              >
+                Rechazar
+              </button>
+              <button
+                class="dashboard-danger-button"
+                type="button"
+                (click)="deleteSelectedEmergency()"
+                [disabled]="isUpdatingEmergencyStatus"
+              >
+                Eliminar
+              </button>
+            </ng-template>
+            <button
+              class="dashboard-secondary-button"
+              type="button"
+              (click)="closeEmergencyModal()"
+              [disabled]="isUpdatingEmergencyStatus"
+            >
+              Cancelar
+            </button>
+          </div>
+        </section>
+      </div>
     </main>
   `,
   styleUrl: './shared-pages.css',
 })
-export class DashboardPageComponent {
+export class DashboardPageComponent implements OnDestroy {
   readonly technicianSpecialtyOptions = TECHNICIAN_SPECIALTY_OPTIONS;
+  readonly workshopZoneOptions = WORKSHOP_ZONE_OPTIONS;
+  readonly workshopSpecialtyOptions = WORKSHOP_SPECIALTY_OPTIONS;
+  readonly isSecureContext = typeof window !== 'undefined' ? window.isSecureContext : false;
   private readonly http = inject(HttpClient);
+  private readonly sanitizer = inject(DomSanitizer);
   private readonly router = inject(Router);
   private readonly workshopsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops`;
   private readonly techniciansApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/technicians`;
   private readonly clientsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/clientes`;
+  private readonly emergenciesApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/emergencias`;
+  private readonly backendBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
   private readonly appSessionStorageKey = 'acb_session';
 
   readonly requests: DashboardItem[] = [
@@ -1131,48 +1506,12 @@ export class DashboardPageComponent {
     },
   ];
 
-  readonly maintenanceRequests: MaintenanceRequest[] = [
-    {
-      id: 125,
-      code: 'EMG-000125',
-      client: 'Juan Pérez',
-      vehicle: 'Toyota Corolla ABC-123',
-      location: 'Av. Principal 23',
-      priority: 'Alta',
-      status: 'pendiente',
-      distance: '0,4 km',
-      detail: 'Sobrecalentamiento con humo visible del motor.',
-      reportedAt: 'Hace 8 min',
-    },
-    {
-      id: 112,
-      code: 'EMG-000112',
-      client: 'María López',
-      vehicle: 'Honda Civic TGL-456',
-      location: 'Calle Norte 35',
-      priority: 'Alta',
-      status: 'pendiente',
-      distance: '0,7 km',
-      detail: 'Ruido extraño en el motor y emisión de humo.',
-      reportedAt: 'Hace 12 min',
-    },
-    {
-      id: 123,
-      code: 'EMG-000123',
-      client: 'Carlos Díaz',
-      vehicle: 'Nissan Sentra KLM-789',
-      location: 'Av. Central 20',
-      priority: 'Media',
-      status: 'pendiente',
-      distance: '0,8 km',
-      detail: 'Batería descargada, el vehículo no enciende.',
-      reportedAt: 'Hace 21 min',
-    },
-  ];
+  maintenanceRequests: MaintenanceRequest[] = [];
 
   maintenanceSearch = '';
   maintenanceFilter: 'todas' | 'pendiente' | 'activo' | 'rechazado' = 'todas';
-  selectedMaintenanceRequestId: number | null = 125;
+  selectedMaintenanceRequestId: number | null = null;
+  selectedEmergencyTechnicianId: number | null = null;
 
   selectedSection: DashboardSection = 'dashboard';
   isSidebarCollapsed = false;
@@ -1182,6 +1521,9 @@ export class DashboardPageComponent {
   isLoading = true;
   isTechniciansLoading = true;
   isClientsLoading = true;
+  isEmergenciesLoading = true;
+  isUpdatingEmergencyStatus = false;
+  isAssigningEmergencyTechnician = false;
   isSavingTechnician = false;
   isSavingWorkshop = false;
   isUpdatingWorkshopApproval = false;
@@ -1190,6 +1532,7 @@ export class DashboardPageComponent {
   editingWorkshopId: number | null = null;
   editingClientId: number | null = null;
   technicianFeedback = '';
+  emergencyAssignmentFeedback = '';
   workshopEditFeedback = '';
   clientEditFeedback = '';
   technicianFilter: TechnicianFilter = 'activos';
@@ -1201,6 +1544,40 @@ export class DashboardPageComponent {
   readonly workshopsPageSize = 15;
   private readonly adminSession: AdminSession | null = this.readAdminSession();
   clientPendingDelete: Client | null = null;
+  showEmergencyModal = false;
+  private emergencyMap?: any;
+  private emergencyMapMarkersLayer?: any;
+  private emergencyMapResizeTimer?: number;
+  private workshopEditMap?: any;
+  private workshopEditMapMarker?: any;
+  private workshopEditMapResizeTimer?: number;
+  private workshopEditMapHost?: HTMLDivElement;
+  isWorkshopLocationLocating = false;
+  workshopLocationMessage = '';
+
+  @ViewChild('emergencyMapCanvas')
+  set emergencyMapCanvas(element: ElementRef<HTMLDivElement> | undefined) {
+    if (!element || typeof window === 'undefined') {
+      return;
+    }
+
+    window.setTimeout(() => {
+      this.initializeEmergencyMap(element.nativeElement);
+      this.renderSelectedEmergencyMap();
+    });
+  }
+
+  @ViewChild('workshopEditMapCanvas')
+  set workshopEditMapCanvas(element: ElementRef<HTMLDivElement> | undefined) {
+    if (!element || typeof window === 'undefined' || !this.showWorkshopEditModal) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      this.initializeWorkshopEditMap(element.nativeElement);
+      this.renderWorkshopEditMap();
+    });
+  }
 
   technicianForm: TechnicianFormModel = this.createEmptyTechnicianForm();
   workshopForm: WorkshopFormModel = this.createEmptyWorkshopForm();
@@ -1245,9 +1622,33 @@ export class DashboardPageComponent {
   ];
 
   constructor() {
+    if (this.isWorkshopSession) {
+      this.selectedSection = 'emergencies';
+      this.maintenanceFilter = 'pendiente';
+    }
+
     this.loadWorkshops();
     this.loadTechnicians();
     this.loadClients();
+    this.loadEmergencies();
+  }
+
+  ngOnDestroy(): void {
+    if (typeof window !== 'undefined' && this.emergencyMapResizeTimer !== undefined) {
+      window.clearTimeout(this.emergencyMapResizeTimer);
+    }
+
+    if (typeof window !== 'undefined' && this.workshopEditMapResizeTimer !== undefined) {
+      window.clearTimeout(this.workshopEditMapResizeTimer);
+    }
+
+    if (this.emergencyMap) {
+      this.emergencyMap.remove();
+      this.emergencyMap = undefined;
+      this.emergencyMapMarkersLayer = undefined;
+    }
+
+    this.destroyWorkshopEditMap();
   }
 
   get sectionTitle(): string {
@@ -1299,6 +1700,14 @@ export class DashboardPageComponent {
     return this.maintenanceRequests.find((request) => request.id === this.selectedMaintenanceRequestId) ?? null;
   }
 
+  get assignableTechnicians(): Technician[] {
+    const assignedTechnicianId = this.selectedMaintenanceRequest?.assignedTechnicianId ?? null;
+
+    return this.technicians.filter(
+      (technician) => technician.status === 'disponible' || technician.id === assignedTechnicianId,
+    );
+  }
+
   get maintenanceSummaryCounts(): { label: string; value: number }[] {
     return [
       { label: 'Urgentes', value: this.maintenanceRequests.filter((request) => request.priority === 'Alta').length },
@@ -1309,6 +1718,10 @@ export class DashboardPageComponent {
 
   selectMaintenanceRequest(request: MaintenanceRequest): void {
     this.selectedMaintenanceRequestId = request.id;
+    this.selectedEmergencyTechnicianId = request.assignedTechnicianId;
+    this.emergencyAssignmentFeedback = '';
+    this.showEmergencyModal = true;
+    this.renderSelectedEmergencyMap();
   }
 
   setMaintenanceFilter(filter: 'todas' | 'pendiente' | 'activo' | 'rechazado'): void {
@@ -1317,6 +1730,607 @@ export class DashboardPageComponent {
 
   clearMaintenanceSearch(): void {
     this.maintenanceSearch = '';
+    this.maintenanceFilter = this.isWorkshopSession ? 'pendiente' : 'todas';
+  }
+
+  closeEmergencyModal(): void {
+    this.showEmergencyModal = false;
+    this.selectedEmergencyTechnicianId = null;
+    this.emergencyAssignmentFeedback = '';
+  }
+
+  updateSelectedEmergencyStatus(nextStatus: 'activo' | 'rechazado'): void {
+    const selected = this.selectedMaintenanceRequest;
+
+    if (!selected || this.isUpdatingEmergencyStatus) {
+      return;
+    }
+
+    this.isUpdatingEmergencyStatus = true;
+
+    this.http
+      .put<EmergencyReport>(
+        `${this.emergenciesApiUrl}/${selected.id}/status`,
+        { emergency_status: nextStatus },
+        {
+          params: this.currentWorkshopId ? { workshop_id: this.currentWorkshopId } : {},
+        },
+      )
+      .subscribe({
+        next: (updatedReport) => {
+          const updatedRequest = this.mapEmergencyReportToRequest(updatedReport);
+          this.maintenanceRequests = this.maintenanceRequests.map((request) =>
+            request.id === updatedRequest.id ? updatedRequest : request,
+          );
+          this.selectedMaintenanceRequestId = updatedRequest.id;
+          this.selectedEmergencyTechnicianId = updatedRequest.assignedTechnicianId;
+          this.isUpdatingEmergencyStatus = false;
+          this.emergencyAssignmentFeedback =
+            nextStatus === 'activo'
+              ? 'Emergencia aceptada. Ahora puedes asignar un tecnico disponible.'
+              : '';
+
+          if (nextStatus === 'activo') {
+            this.maintenanceFilter = 'activo';
+          }
+
+          if (nextStatus === 'rechazado') {
+            this.closeEmergencyModal();
+            this.loadEmergencies();
+          }
+        },
+        error: () => {
+          this.isUpdatingEmergencyStatus = false;
+          window.alert('No se pudo actualizar el estado de la emergencia.');
+        },
+      });
+  }
+
+  assignSelectedEmergencyTechnician(): void {
+    const selected = this.selectedMaintenanceRequest;
+
+    if (
+      !selected ||
+      !this.currentWorkshopId ||
+      !this.selectedEmergencyTechnicianId ||
+      this.isAssigningEmergencyTechnician
+    ) {
+      return;
+    }
+
+    if (selected.status !== 'activo') {
+      this.emergencyAssignmentFeedback = 'Primero acepta la emergencia para asignar un tecnico.';
+      return;
+    }
+
+    this.isAssigningEmergencyTechnician = true;
+    this.emergencyAssignmentFeedback = '';
+
+    this.http
+      .put<EmergencyReport>(
+        `${this.emergenciesApiUrl}/${selected.id}/technician-assignment`,
+        { technician_id: this.selectedEmergencyTechnicianId },
+        { params: { workshop_id: this.currentWorkshopId } },
+      )
+      .subscribe({
+        next: (updatedReport) => {
+          const updatedRequest = this.mapEmergencyReportToRequest(updatedReport);
+          this.maintenanceRequests = this.maintenanceRequests.map((request) =>
+            request.id === updatedRequest.id ? updatedRequest : request,
+          );
+          this.selectedMaintenanceRequestId = updatedRequest.id;
+          this.selectedEmergencyTechnicianId = updatedRequest.assignedTechnicianId;
+          this.isAssigningEmergencyTechnician = false;
+          this.emergencyAssignmentFeedback = 'Tecnico asignado correctamente.';
+          this.loadTechnicians();
+        },
+        error: () => {
+          this.isAssigningEmergencyTechnician = false;
+          this.emergencyAssignmentFeedback = 'No se pudo asignar el tecnico seleccionado.';
+        },
+      });
+  }
+
+  deleteSelectedEmergency(): void {
+    const selected = this.selectedMaintenanceRequest;
+
+    if (!selected || this.isUpdatingEmergencyStatus) {
+      return;
+    }
+
+    const confirmed = window.confirm(`¿Deseas eliminar la solicitud ${selected.code}?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    this.isUpdatingEmergencyStatus = true;
+
+    this.http
+      .delete(`${this.emergenciesApiUrl}/${selected.id}`, {
+        params: this.currentWorkshopId ? { workshop_id: this.currentWorkshopId } : {},
+      })
+      .subscribe({
+        next: () => {
+          this.isUpdatingEmergencyStatus = false;
+          this.closeEmergencyModal();
+          this.loadEmergencies();
+        },
+        error: () => {
+          this.isUpdatingEmergencyStatus = false;
+          window.alert('No se pudo eliminar la emergencia.');
+        },
+      });
+  }
+
+  loadEmergencies(): void {
+    this.isEmergenciesLoading = true;
+
+    const params: Record<string, string> = {};
+
+    if (this.currentWorkshopId) {
+      params['nearest_workshop_id'] = String(this.currentWorkshopId);
+    }
+
+    this.http.get<EmergencyReport[]>(this.emergenciesApiUrl, { params }).subscribe({
+      next: (reports) => {
+        this.maintenanceRequests = reports.map((report) => this.mapEmergencyReportToRequest(report));
+        this.selectedMaintenanceRequestId = this.maintenanceRequests[0]?.id ?? null;
+        this.isEmergenciesLoading = false;
+        this.renderSelectedEmergencyMap();
+      },
+      error: () => {
+        this.maintenanceRequests = [];
+        this.selectedMaintenanceRequestId = null;
+        this.isEmergenciesLoading = false;
+        this.renderSelectedEmergencyMap();
+      },
+    });
+  }
+
+  private mapEmergencyReportToRequest(report: EmergencyReport): MaintenanceRequest {
+    const addressParts = [report.address?.trim(), report.zone?.trim()].filter(Boolean);
+    const vehicleLabel = [report.vehicle_name?.trim(), report.vehicle_plate?.trim()].filter(Boolean).join(' · ');
+    const detail =
+      report.description?.trim() ||
+      report.problem_type_standardized?.trim() ||
+      report.problem_type?.trim() ||
+      'Emergencia reportada desde la app movil.';
+
+    return {
+      id: report.id,
+      code: `EMG-${String(report.id).padStart(6, '0')}`,
+      client: report.client_name?.trim() || `Cliente #${report.client_id ?? report.id}`,
+      vehicle: vehicleLabel || 'Vehiculo sin detalle',
+      location: addressParts.join(' · ') || 'Ubicacion pendiente',
+      priority: this.priorityFromProblemType(report.problem_type_standardized || report.problem_type),
+      status: report.emergency_status ?? 'pendiente',
+      distance: this.formatDistance(report.nearest_workshop_distance_meters),
+      detail,
+      reportedAt: this.relativeTimeLabel(report.created_at),
+      latitude: report.latitude,
+      longitude: report.longitude,
+      nearestWorkshopId: report.nearest_workshop_id,
+      nearestWorkshopName: report.nearest_workshop_name,
+      problemType: report.problem_type,
+      standardizedProblemType: report.problem_type_standardized,
+      clientDescription: report.description?.trim() || null,
+      audioTranscript: report.audio_transcript?.trim() || null,
+      photoUrls: this.getEmergencyPhotoUrls(report),
+      audioUrl: this.normalizeBackendAssetUrl(report.audio_url),
+      mapEmbedUrl: this.buildEmergencyMapEmbedUrl(report.latitude, report.longitude),
+      mapExternalUrl: this.buildEmergencyMapExternalUrl(report.latitude, report.longitude),
+      assignmentId: report.assignment_id,
+      assignmentStatus: report.assignment_status,
+      assignedTechnicianId: report.assigned_technician_id,
+      assignedTechnicianName: report.assigned_technician_name,
+      assignedTechnicianPhone: report.assigned_technician_phone,
+      assignedTechnicianSpecialty: report.assigned_technician_specialty,
+    };
+  }
+
+  private getEmergencyPhotoUrls(report: EmergencyReport): string[] {
+    const rawPhotoUrls = this.parseMediaList(report.photo_urls);
+    const rawPhotoPaths = this.parseMediaList(report.photo_paths);
+    const normalizedPhotoUrls = rawPhotoUrls
+      .map((photoUrl) => this.normalizeBackendAssetUrl(photoUrl))
+      .filter((photoUrl): photoUrl is string => Boolean(photoUrl));
+    const normalizedPhotoPaths = rawPhotoPaths
+      .map((photoPath) => this.normalizeBackendAssetUrl(photoPath))
+      .filter((photoUrl): photoUrl is string => Boolean(photoUrl));
+
+    return Array.from(new Set([...normalizedPhotoUrls, ...normalizedPhotoPaths]));
+  }
+
+  private parseMediaList(value: string[] | string | null | undefined): string[] {
+    if (Array.isArray(value)) {
+      return value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()));
+    }
+
+    if (typeof value !== 'string') {
+      return [];
+    }
+
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()));
+      }
+    } catch {
+      return [trimmed];
+    }
+
+    return [trimmed];
+  }
+
+  private buildEmergencyMapEmbedUrl(latitude: number | null, longitude: number | null): SafeResourceUrl | null {
+    if (!this.hasValidCoordinates(latitude, longitude)) {
+      return null;
+    }
+
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    const zoomOffset = 0.006;
+    const left = lng - zoomOffset;
+    const right = lng + zoomOffset;
+    const bottom = lat - zoomOffset;
+    const top = lat + zoomOffset;
+    const url =
+      'https://www.openstreetmap.org/export/embed.html' +
+      `?bbox=${left}%2C${bottom}%2C${right}%2C${top}` +
+      '&layer=mapnik' +
+      `&marker=${lat}%2C${lng}`;
+
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
+  private buildEmergencyMapExternalUrl(latitude: number | null, longitude: number | null): string | null {
+    if (!this.hasValidCoordinates(latitude, longitude)) {
+      return null;
+    }
+
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`;
+  }
+
+  private hasValidCoordinates(latitude: number | null, longitude: number | null): boolean {
+    return (
+      typeof latitude === 'number' &&
+      typeof longitude === 'number' &&
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude)
+    );
+  }
+
+  private normalizeBackendAssetUrl(value: string | null | undefined): string | null {
+    const normalized = value?.trim();
+
+    if (!normalized) {
+      return null;
+    }
+
+    if (/^https?:\/\//i.test(normalized)) {
+      return normalized;
+    }
+
+    if (normalized.startsWith('/')) {
+      return `${this.backendBaseUrl}${normalized}`;
+    }
+
+    if (normalized.startsWith('uploads/') || normalized.startsWith('emergencias/') || normalized.startsWith('vehicles/')) {
+      return `${this.backendBaseUrl}/uploads/${normalized.replace(/^uploads\//, '')}`;
+    }
+
+    return `${this.backendBaseUrl}/${normalized}`;
+  }
+
+  private priorityFromProblemType(problemType: string | null | undefined): 'Alta' | 'Media' | 'Baja' {
+    switch ((problemType || '').trim()) {
+      case 'Accidente':
+      case 'Motor':
+        return 'Alta';
+      case 'Batería':
+      case 'Neumático':
+      case 'Sistema eléctrico':
+        return 'Media';
+      default:
+        return 'Baja';
+    }
+  }
+
+  private formatDistance(distanceMeters: number | null): string {
+    if (distanceMeters === null || Number.isNaN(distanceMeters)) {
+      return 'Sin distancia';
+    }
+
+    if (distanceMeters < 1000) {
+      return `${Math.round(distanceMeters)} m`;
+    }
+
+    return `${(distanceMeters / 1000).toFixed(1).replace('.', ',')} km`;
+  }
+
+  private relativeTimeLabel(createdAt: string): string {
+    const created = new Date(createdAt).getTime();
+
+    if (Number.isNaN(created)) {
+      return 'Reciente';
+    }
+
+    const diffMinutes = Math.max(1, Math.round((Date.now() - created) / (1000 * 60)));
+
+    if (diffMinutes < 60) {
+      return `Hace ${diffMinutes} min`;
+    }
+
+    const diffHours = Math.round(diffMinutes / 60);
+    if (diffHours < 24) {
+      return `Hace ${diffHours} h`;
+    }
+
+    const diffDays = Math.round(diffHours / 24);
+    return `Hace ${diffDays} d`;
+  }
+
+  get selectedMaintenancePhotoUrls(): string[] {
+    return this.selectedMaintenanceRequest?.photoUrls ?? [];
+  }
+
+  get selectedEmergencyHasCoordinates(): boolean {
+    return (
+      this.selectedMaintenanceRequest?.latitude !== null &&
+      this.selectedMaintenanceRequest?.latitude !== undefined &&
+      this.selectedMaintenanceRequest?.longitude !== null &&
+      this.selectedMaintenanceRequest?.longitude !== undefined
+    );
+  }
+
+  private initializeEmergencyMap(element: HTMLDivElement): void {
+    if (typeof L === 'undefined') {
+      return;
+    }
+
+    if (!this.emergencyMap) {
+      this.emergencyMap = L.map(element, {
+        zoomControl: true,
+        scrollWheelZoom: true,
+      }).setView([-17.7833, -63.1821], 12);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(this.emergencyMap);
+
+      this.emergencyMapMarkersLayer = L.layerGroup().addTo(this.emergencyMap);
+    }
+
+    this.scheduleEmergencyMapResize();
+  }
+
+  private initializeWorkshopEditMap(element: HTMLDivElement): void {
+    if (typeof L === 'undefined') {
+      return;
+    }
+
+    if (this.workshopEditMapHost && this.workshopEditMapHost !== element) {
+      this.destroyWorkshopEditMap();
+    }
+
+    this.workshopEditMapHost = element;
+
+    if (!this.workshopEditMap) {
+      const [latitude, longitude] = this.getWorkshopEditCoordinates();
+
+      this.workshopEditMap = L.map(element, {
+        zoomControl: true,
+        scrollWheelZoom: true,
+      }).setView([latitude, longitude], 13);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(this.workshopEditMap);
+
+      this.workshopEditMapMarker = L.marker([latitude, longitude], {
+        draggable: true,
+      }).addTo(this.workshopEditMap);
+
+      this.workshopEditMapMarker.on('dragend', () => {
+        const position = this.workshopEditMapMarker.getLatLng();
+        this.updateWorkshopEditLocation(position.lat, position.lng);
+      });
+
+      this.workshopEditMap.on('click', (event: { latlng: { lat: number; lng: number } }) => {
+        this.updateWorkshopEditLocation(event.latlng.lat, event.latlng.lng);
+      });
+    }
+
+    this.scheduleWorkshopEditMapResize();
+  }
+
+  private renderWorkshopEditMap(animate = false): void {
+    if (!this.workshopEditMap || !this.workshopEditMapMarker) {
+      return;
+    }
+
+    const [latitude, longitude] = this.getWorkshopEditCoordinates();
+    this.workshopEditMapMarker.setLatLng([latitude, longitude]);
+    this.workshopEditMap.setView([latitude, longitude], 15, { animate });
+    this.scheduleWorkshopEditMapResize();
+  }
+
+  private renderSelectedEmergencyMap(): void {
+    if (!this.emergencyMap || !this.emergencyMapMarkersLayer) {
+      return;
+    }
+
+    this.emergencyMapMarkersLayer.clearLayers();
+
+    const request = this.selectedMaintenanceRequest;
+
+    if (!request || request.latitude === null || request.longitude === null) {
+      this.emergencyMap.setView([-17.7833, -63.1821], 12);
+      this.scheduleEmergencyMapResize();
+      return;
+    }
+
+    const bounds: [number, number][] = [];
+    const emergencyMarker = L.marker([request.latitude, request.longitude], {
+      icon: this.createEmergencyMarkerIcon(),
+    }).addTo(this.emergencyMapMarkersLayer);
+    emergencyMarker.bindPopup(`
+      <strong>${this.escapeHtml(request.code)}</strong><br>
+      ${this.escapeHtml(request.client)}<br>
+      ${this.escapeHtml(request.location)}
+    `);
+    bounds.push([request.latitude, request.longitude]);
+
+    const assignedWorkshop =
+      request.nearestWorkshopId === null
+        ? null
+        : this.workshops.find((workshop) => workshop.id === request.nearestWorkshopId) ?? null;
+
+    if (
+      assignedWorkshop &&
+      assignedWorkshop.latitude !== null &&
+      assignedWorkshop.longitude !== null
+    ) {
+      const workshopMarker = L.marker([assignedWorkshop.latitude, assignedWorkshop.longitude]).addTo(
+        this.emergencyMapMarkersLayer,
+      );
+      workshopMarker.bindPopup(`
+        <strong>${this.escapeHtml(assignedWorkshop.workshop_name)}</strong><br>
+        ${this.escapeHtml(assignedWorkshop.specialty)}<br>
+        ${this.escapeHtml(assignedWorkshop.zone)}
+      `);
+
+      L.polyline(
+        [
+          [request.latitude, request.longitude],
+          [assignedWorkshop.latitude, assignedWorkshop.longitude],
+        ],
+        {
+          color: '#1e5aa8',
+          weight: 4,
+          opacity: 0.8,
+          dashArray: '10 8',
+        },
+      ).addTo(this.emergencyMapMarkersLayer);
+
+      bounds.push([assignedWorkshop.latitude, assignedWorkshop.longitude]);
+    }
+
+    if (bounds.length === 1) {
+      this.emergencyMap.setView(bounds[0], 15, { animate: true });
+      emergencyMarker.openPopup();
+      this.scheduleEmergencyMapResize();
+      return;
+    }
+
+    this.emergencyMap.fitBounds(bounds, {
+      padding: [30, 30],
+      maxZoom: 15,
+    });
+    this.scheduleEmergencyMapResize();
+  }
+
+  private createEmergencyMarkerIcon(): any {
+    if (typeof L === 'undefined') {
+      return undefined;
+    }
+
+    return L.divIcon({
+      className: 'maintenance-emergency-marker',
+      html:
+        '<span style="position:relative;display:block;width:26px;height:26px;border-radius:50% 50% 50% 0;background:linear-gradient(180deg,#ff6c63,#d92f2f);border:2px solid rgba(255,255,255,0.96);box-shadow:0 10px 18px rgba(185,31,31,0.28);transform:rotate(-45deg);"><span style="position:absolute;inset:6px;border-radius:50%;background:#fff7f7;"></span></span>',
+      iconSize: [26, 38],
+      iconAnchor: [13, 38],
+      popupAnchor: [0, -34],
+    });
+  }
+
+  private scheduleEmergencyMapResize(): void {
+    if (typeof window === 'undefined' || !this.emergencyMap) {
+      return;
+    }
+
+    if (this.emergencyMapResizeTimer !== undefined) {
+      window.clearTimeout(this.emergencyMapResizeTimer);
+    }
+
+    this.emergencyMapResizeTimer = window.setTimeout(() => {
+      this.emergencyMap?.invalidateSize();
+    }, 120);
+  }
+
+  private updateWorkshopEditLocation(latitude: number, longitude: number): void {
+    this.workshopForm = {
+      ...this.workshopForm,
+      latitude,
+      longitude,
+    };
+    this.workshopLocationMessage = '';
+
+    if (this.workshopEditMapMarker) {
+      this.workshopEditMapMarker.setLatLng([latitude, longitude]);
+    }
+  }
+
+  private getWorkshopEditCoordinates(): [number, number] {
+    const latitude =
+      typeof this.workshopForm.latitude === 'number' && Number.isFinite(this.workshopForm.latitude)
+        ? this.workshopForm.latitude
+        : -17.7833;
+    const longitude =
+      typeof this.workshopForm.longitude === 'number' && Number.isFinite(this.workshopForm.longitude)
+        ? this.workshopForm.longitude
+        : -63.1821;
+
+    return [latitude, longitude];
+  }
+
+  private scheduleWorkshopEditMapResize(): void {
+    if (typeof window === 'undefined' || !this.workshopEditMap) {
+      return;
+    }
+
+    if (this.workshopEditMapResizeTimer !== undefined) {
+      window.clearTimeout(this.workshopEditMapResizeTimer);
+    }
+
+    this.workshopEditMapResizeTimer = window.setTimeout(() => {
+      this.workshopEditMap?.invalidateSize();
+    }, 120);
+  }
+
+  private destroyWorkshopEditMap(): void {
+    if (typeof window !== 'undefined' && this.workshopEditMapResizeTimer !== undefined) {
+      window.clearTimeout(this.workshopEditMapResizeTimer);
+      this.workshopEditMapResizeTimer = undefined;
+    }
+
+    if (this.workshopEditMap) {
+      this.workshopEditMap.remove();
+      this.workshopEditMap = undefined;
+      this.workshopEditMapMarker = undefined;
+    }
+
+    this.workshopEditMapHost = undefined;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
   }
 
   get userInitials(): string {
@@ -1408,8 +2422,18 @@ export class DashboardPageComponent {
       email: '',
       zone: '',
       specialty: '',
+      latitude: null,
+      longitude: null,
       password: '',
     };
+  }
+
+  formatCoordinate(value: number | null): string {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return '-';
+    }
+
+    return value.toFixed(6);
   }
 
   createEmptyClientForm(): ClientFormModel {
@@ -1427,6 +2451,16 @@ export class DashboardPageComponent {
 
   selectSection(section: DashboardSection): void {
     this.selectedSection = section;
+
+    if (section === 'emergencies' && !this.maintenanceRequests.length) {
+      this.loadEmergencies();
+    }
+
+    if (section === 'emergencies') {
+      if (typeof window !== 'undefined') {
+        window.setTimeout(() => this.renderSelectedEmergencyMap());
+      }
+    }
   }
 
   toggleSidebar(): void {
@@ -1669,6 +2703,7 @@ export class DashboardPageComponent {
   editWorkshop(workshop: WorkshopRegistration): void {
     this.editingWorkshopId = workshop.id;
     this.workshopEditFeedback = '';
+    this.workshopLocationMessage = '';
     this.workshopForm = {
       workshop_name: workshop.workshop_name,
       contact_name: workshop.contact_name,
@@ -1676,6 +2711,8 @@ export class DashboardPageComponent {
       email: workshop.email,
       zone: workshop.zone,
       specialty: workshop.specialty,
+      latitude: workshop.latitude,
+      longitude: workshop.longitude,
       password: '',
     };
     this.showWorkshopEditModal = true;
@@ -1703,7 +2740,45 @@ export class DashboardPageComponent {
     this.editingWorkshopId = null;
     this.isSavingWorkshop = false;
     this.workshopEditFeedback = '';
+    this.workshopLocationMessage = '';
+    this.isWorkshopLocationLocating = false;
     this.workshopForm = this.createEmptyWorkshopForm();
+    this.destroyWorkshopEditMap();
+  }
+
+  locateWorkshopEditCurrentPosition(): void {
+    this.workshopLocationMessage = '';
+
+    if (!this.isSecureContext) {
+      this.workshopLocationMessage =
+        'La ubicación automática del navegador solo funciona en HTTPS o en localhost. Usa el mapa manualmente o abre el sitio con HTTPS.';
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      this.workshopLocationMessage = 'Tu navegador no soporta geolocalización.';
+      return;
+    }
+
+    this.isWorkshopLocationLocating = true;
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        this.updateWorkshopEditLocation(position.coords.latitude, position.coords.longitude);
+        this.renderWorkshopEditMap(true);
+        this.isWorkshopLocationLocating = false;
+      },
+      () => {
+        this.isWorkshopLocationLocating = false;
+        this.workshopLocationMessage =
+          'No se pudo obtener tu ubicación actual. Revisa los permisos del navegador.';
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      },
+    );
   }
 
   submitWorkshopEdit(): void {
@@ -1725,8 +2800,8 @@ export class DashboardPageComponent {
       email: this.workshopForm.email.trim(),
       zone: this.workshopForm.zone.trim(),
       specialty: this.workshopForm.specialty.trim(),
-      latitude: target.latitude,
-      longitude: target.longitude,
+      latitude: this.workshopForm.latitude,
+      longitude: this.workshopForm.longitude,
       timezone: target.timezone,
       utc_offset_minutes: target.utc_offset_minutes,
       password: this.workshopForm.password.trim(),
@@ -1736,10 +2811,14 @@ export class DashboardPageComponent {
       !payload.workshop_name ||
       !payload.contact_name ||
       !payload.phone ||
+      !payload.email ||
       !payload.zone ||
-      !payload.specialty
+      !payload.specialty ||
+      payload.latitude === null ||
+      payload.longitude === null
     ) {
-      this.workshopEditFeedback = 'Completa Taller, Responsable, Contacto, Zona y Especialidad.';
+      this.workshopEditFeedback =
+        'Completa Taller, Responsable, Contacto, Correo, Zona, Especialidad y Ubicación del Taller.';
       return;
     }
 

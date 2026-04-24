@@ -93,7 +93,11 @@ CREATE_EMERGENCY_REPORTS_TABLE_SQL = text(
         vehicle_name VARCHAR(160) NOT NULL,
         vehicle_plate VARCHAR(40) NOT NULL,
         problem_type VARCHAR(120) NOT NULL,
+        emergency_status VARCHAR(30) NOT NULL DEFAULT 'pendiente',
         problem_type_standardized VARCHAR(120),
+        photo_problem_type_standardized VARCHAR(120),
+        photo_classification_confidence DOUBLE PRECISION,
+        photo_classification_error TEXT,
         description TEXT,
         latitude DOUBLE PRECISION,
         longitude DOUBLE PRECISION,
@@ -113,6 +117,20 @@ CREATE_EMERGENCY_REPORTS_TABLE_SQL = text(
         audio_path VARCHAR(255),
         audio_url VARCHAR(255),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """
+)
+
+CREATE_EMERGENCY_ASSIGNMENTS_TABLE_SQL = text(
+    """
+    CREATE TABLE IF NOT EXISTS emergency_assignments (
+        id BIGSERIAL PRIMARY KEY,
+        emergency_report_id BIGINT NOT NULL UNIQUE REFERENCES emergency_reports(id) ON DELETE CASCADE,
+        workshop_id BIGINT NOT NULL REFERENCES workshop_registrations(id) ON DELETE CASCADE,
+        technician_id BIGINT NOT NULL REFERENCES technicians(id) ON DELETE RESTRICT,
+        assignment_status VARCHAR(30) NOT NULL DEFAULT 'asignado',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """
 )
@@ -391,6 +409,24 @@ LIST_TECHNICIANS_BY_WORKSHOP_SQL = text(
     """
 )
 
+GET_TECHNICIAN_BY_WORKSHOP_SQL = text(
+    """
+    SELECT
+        id,
+        workshop_id,
+        full_name,
+        phone,
+        email,
+        specialty,
+        status,
+        created_at,
+        updated_at
+    FROM technicians
+    WHERE id = :id AND workshop_id = :workshop_id
+    LIMIT 1
+    """
+)
+
 UPDATE_TECHNICIAN_SQL = text(
     """
     UPDATE technicians
@@ -400,6 +436,26 @@ UPDATE_TECHNICIAN_SQL = text(
         phone = :phone,
         email = :email,
         specialty = :specialty,
+        status = :status,
+        updated_at = NOW()
+    WHERE id = :id
+    RETURNING
+        id,
+        workshop_id,
+        full_name,
+        phone,
+        email,
+        specialty,
+        status,
+        created_at,
+        updated_at
+    """
+)
+
+UPDATE_TECHNICIAN_STATUS_SQL = text(
+    """
+    UPDATE technicians
+    SET
         status = :status,
         updated_at = NOW()
     WHERE id = :id
@@ -758,7 +814,11 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         vehicle_name,
         vehicle_plate,
         problem_type,
+        emergency_status,
         problem_type_standardized,
+        photo_problem_type_standardized,
+        photo_classification_confidence,
+        photo_classification_error,
         description,
         latitude,
         longitude,
@@ -783,7 +843,11 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         :vehicle_name,
         :vehicle_plate,
         :problem_type,
+        :emergency_status,
         :problem_type_standardized,
+        :photo_problem_type_standardized,
+        :photo_classification_confidence,
+        :photo_classification_error,
         :description,
         :latitude,
         :longitude,
@@ -809,7 +873,11 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         vehicle_name,
         vehicle_plate,
         problem_type,
+        emergency_status,
         problem_type_standardized,
+        photo_problem_type_standardized,
+        photo_classification_confidence,
+        photo_classification_error,
         description,
         latitude,
         longitude,
@@ -832,6 +900,154 @@ INSERT_EMERGENCY_REPORT_SQL = text(
     """
 )
 
+LIST_EMERGENCY_REPORTS_SQL = text(
+    """
+    SELECT
+        er.id,
+        er.client_id,
+        er.vehicle_name,
+        er.vehicle_plate,
+        er.problem_type,
+        er.emergency_status,
+        er.problem_type_standardized,
+        er.photo_problem_type_standardized,
+        er.photo_classification_confidence,
+        er.photo_classification_error,
+        er.description,
+        er.latitude,
+        er.longitude,
+        er.address,
+        er.zone,
+        er.nearest_workshop_id,
+        er.nearest_workshop_name,
+        er.nearest_workshop_specialty,
+        er.nearest_workshop_zone,
+        er.nearest_workshop_distance_meters,
+        er.audio_duration_seconds,
+        er.audio_transcript,
+        er.audio_transcript_status,
+        er.audio_transcript_error,
+        er.photo_paths,
+        er.photo_urls,
+        er.audio_path,
+        er.audio_url,
+        er.created_at,
+        c.full_name AS client_name,
+        ea.id AS assignment_id,
+        ea.assignment_status,
+        ea.technician_id AS assigned_technician_id,
+        t.full_name AS assigned_technician_name,
+        t.phone AS assigned_technician_phone,
+        t.email AS assigned_technician_email,
+        t.specialty AS assigned_technician_specialty
+    FROM emergency_reports er
+    LEFT JOIN clients c ON c.id = er.client_id
+    LEFT JOIN emergency_assignments ea ON ea.emergency_report_id = er.id
+    LEFT JOIN technicians t ON t.id = ea.technician_id
+    WHERE (
+        CAST(:nearest_workshop_id AS BIGINT) IS NULL
+        OR er.nearest_workshop_id = CAST(:nearest_workshop_id AS BIGINT)
+    )
+      AND (
+        CAST(:emergency_status AS VARCHAR(30)) IS NULL
+        OR er.emergency_status = CAST(:emergency_status AS VARCHAR(30))
+    )
+    ORDER BY er.created_at DESC, er.id DESC
+    """
+)
+
+UPDATE_EMERGENCY_STATUS_SQL = text(
+    """
+    UPDATE emergency_reports
+    SET emergency_status = :emergency_status
+    WHERE id = :report_id
+      AND (
+        CAST(:nearest_workshop_id AS BIGINT) IS NULL
+        OR nearest_workshop_id = CAST(:nearest_workshop_id AS BIGINT)
+    )
+    RETURNING
+        id,
+        client_id,
+        vehicle_name,
+        vehicle_plate,
+        problem_type,
+        emergency_status,
+        problem_type_standardized,
+        photo_problem_type_standardized,
+        photo_classification_confidence,
+        photo_classification_error,
+        description,
+        latitude,
+        longitude,
+        address,
+        zone,
+        nearest_workshop_id,
+        nearest_workshop_name,
+        nearest_workshop_specialty,
+        nearest_workshop_zone,
+        nearest_workshop_distance_meters,
+        audio_duration_seconds,
+        audio_transcript,
+        audio_transcript_status,
+        audio_transcript_error,
+        photo_paths,
+        photo_urls,
+        audio_path,
+        audio_url,
+        created_at,
+        NULL::BIGINT AS assignment_id,
+        NULL::VARCHAR(30) AS assignment_status,
+        NULL::BIGINT AS assigned_technician_id,
+        NULL::VARCHAR(160) AS assigned_technician_name,
+        NULL::VARCHAR(40) AS assigned_technician_phone,
+        NULL::VARCHAR(160) AS assigned_technician_email,
+        NULL::VARCHAR(120) AS assigned_technician_specialty
+    """
+)
+
+ASSIGN_EMERGENCY_TECHNICIAN_SQL = text(
+    """
+    INSERT INTO emergency_assignments (
+        emergency_report_id,
+        workshop_id,
+        technician_id,
+        assignment_status
+    )
+    VALUES (
+        :report_id,
+        :workshop_id,
+        :technician_id,
+        'asignado'
+    )
+    ON CONFLICT (emergency_report_id)
+    DO UPDATE SET
+        workshop_id = EXCLUDED.workshop_id,
+        technician_id = EXCLUDED.technician_id,
+        assignment_status = 'asignado',
+        updated_at = NOW()
+    RETURNING
+        id,
+        emergency_report_id,
+        workshop_id,
+        technician_id,
+        assignment_status,
+        created_at,
+        updated_at
+    """
+)
+
+DELETE_EMERGENCY_REPORT_SQL = text(
+    """
+    DELETE FROM emergency_reports
+    WHERE id = :report_id
+      AND (
+        CAST(:nearest_workshop_id AS BIGINT) IS NULL
+        OR nearest_workshop_id = CAST(:nearest_workshop_id AS BIGINT)
+    )
+    RETURNING id, photo_paths, photo_urls, audio_path, audio_url
+    """
+)
+
 
 def check_database_connection() -> bool:
     with engine.connect() as connection:
@@ -846,6 +1062,7 @@ def init_database() -> None:
         connection.execute(CREATE_CLIENTS_TABLE_SQL)
         connection.execute(CREATE_VEHICLES_TABLE_SQL)
         connection.execute(CREATE_EMERGENCY_REPORTS_TABLE_SQL)
+        connection.execute(CREATE_EMERGENCY_ASSIGNMENTS_TABLE_SQL)
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS workshop_id BIGINT"))
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS email VARCHAR(160)"))
         connection.execute(
@@ -926,7 +1143,24 @@ def init_database() -> None:
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS vehicle_plate VARCHAR(40)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS problem_type VARCHAR(120)"))
         connection.execute(
+            text(
+                """
+                ALTER TABLE emergency_reports
+                ADD COLUMN IF NOT EXISTS emergency_status VARCHAR(30) NOT NULL DEFAULT 'pendiente'
+                """
+            )
+        )
+        connection.execute(
             text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS problem_type_standardized VARCHAR(120)")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS photo_problem_type_standardized VARCHAR(120)")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS photo_classification_confidence DOUBLE PRECISION")
+        )
+        connection.execute(
+            text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS photo_classification_error TEXT")
         )
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS description TEXT"))
         connection.execute(text("ALTER TABLE emergency_reports ALTER COLUMN description DROP NOT NULL"))
@@ -972,6 +1206,7 @@ def init_database() -> None:
         )
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_path VARCHAR(255)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_url VARCHAR(255)"))
+        connection.execute(CREATE_EMERGENCY_ASSIGNMENTS_TABLE_SQL)
         connection.execute(
             text(
                 """
@@ -1102,9 +1337,29 @@ def list_technicians_by_workshop(workshop_id: int) -> list[dict[str, object]]:
     return [dict(row) for row in rows]
 
 
+def get_technician_by_workshop(technician_id: int, workshop_id: int) -> dict[str, object] | None:
+    with engine.connect() as connection:
+        result = connection.execute(
+            GET_TECHNICIAN_BY_WORKSHOP_SQL,
+            {"id": technician_id, "workshop_id": workshop_id},
+        )
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
 def update_technician(technician_id: int, payload: Mapping[str, object]) -> dict[str, object] | None:
     with engine.begin() as connection:
         result = connection.execute(UPDATE_TECHNICIAN_SQL, {"id": technician_id, **payload})
+        row = result.mappings().one_or_none()
+    return dict(row) if row else None
+
+
+def update_technician_status(technician_id: int, status: str) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            UPDATE_TECHNICIAN_STATUS_SQL,
+            {"id": technician_id, "status": status},
+        )
         row = result.mappings().one_or_none()
     return dict(row) if row else None
 
@@ -1240,3 +1495,81 @@ def create_emergency_report(payload: Mapping[str, object]) -> dict[str, object]:
         result = connection.execute(INSERT_EMERGENCY_REPORT_SQL, payload)
         row = result.mappings().one()
     return dict(row)
+
+
+def list_emergency_reports(
+    *,
+    nearest_workshop_id: int | None = None,
+    emergency_status: str | None = None,
+) -> list[dict[str, object]]:
+    with engine.connect() as connection:
+        result = connection.execute(
+            LIST_EMERGENCY_REPORTS_SQL,
+            {
+                "nearest_workshop_id": nearest_workshop_id,
+                "emergency_status": emergency_status,
+            },
+        )
+        rows = result.mappings().all()
+    return [dict(row) for row in rows]
+
+
+def update_emergency_status(
+    report_id: int,
+    emergency_status: str,
+    *,
+    nearest_workshop_id: int | None = None,
+) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            UPDATE_EMERGENCY_STATUS_SQL,
+            {
+                "report_id": report_id,
+                "emergency_status": emergency_status,
+                "nearest_workshop_id": nearest_workshop_id,
+            },
+        )
+        row = result.mappings().one_or_none()
+
+    return dict(row) if row is not None else None
+
+
+def assign_emergency_technician(
+    report_id: int,
+    workshop_id: int,
+    technician_id: int,
+) -> dict[str, object]:
+    with engine.begin() as connection:
+        result = connection.execute(
+            ASSIGN_EMERGENCY_TECHNICIAN_SQL,
+            {
+                "report_id": report_id,
+                "workshop_id": workshop_id,
+                "technician_id": technician_id,
+            },
+        )
+        row = result.mappings().one()
+        connection.execute(
+            UPDATE_TECHNICIAN_STATUS_SQL,
+            {"id": technician_id, "status": "ocupado"},
+        )
+
+    return dict(row)
+
+
+def delete_emergency_report(
+    report_id: int,
+    *,
+    nearest_workshop_id: int | None = None,
+) -> dict[str, object] | None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            DELETE_EMERGENCY_REPORT_SQL,
+            {
+                "report_id": report_id,
+                "nearest_workshop_id": nearest_workshop_id,
+            },
+        )
+        row = result.mappings().one_or_none()
+
+    return dict(row) if row is not None else None
