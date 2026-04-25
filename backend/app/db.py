@@ -93,6 +93,7 @@ CREATE_EMERGENCY_REPORTS_TABLE_SQL = text(
         vehicle_name VARCHAR(160) NOT NULL,
         vehicle_plate VARCHAR(40) NOT NULL,
         problem_type VARCHAR(120) NOT NULL,
+        price INTEGER,
         emergency_status VARCHAR(30) NOT NULL DEFAULT 'pendiente',
         problem_type_standardized VARCHAR(120),
         photo_problem_type_standardized VARCHAR(120),
@@ -828,6 +829,7 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         vehicle_name,
         vehicle_plate,
         problem_type,
+        price,
         emergency_status,
         problem_type_standardized,
         photo_problem_type_standardized,
@@ -857,6 +859,7 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         :vehicle_name,
         :vehicle_plate,
         :problem_type,
+        :price,
         :emergency_status,
         :problem_type_standardized,
         :photo_problem_type_standardized,
@@ -887,6 +890,7 @@ INSERT_EMERGENCY_REPORT_SQL = text(
         vehicle_name,
         vehicle_plate,
         problem_type,
+        price,
         emergency_status,
         problem_type_standardized,
         photo_problem_type_standardized,
@@ -922,6 +926,7 @@ LIST_EMERGENCY_REPORTS_SQL = text(
         er.vehicle_name,
         er.vehicle_plate,
         er.problem_type,
+        er.price,
         er.emergency_status,
         er.problem_type_standardized,
         er.photo_problem_type_standardized,
@@ -985,6 +990,7 @@ UPDATE_EMERGENCY_STATUS_SQL = text(
         vehicle_name,
         vehicle_plate,
         problem_type,
+        price,
         emergency_status,
         problem_type_standardized,
         photo_problem_type_standardized,
@@ -1059,6 +1065,32 @@ DELETE_EMERGENCY_REPORT_SQL = text(
         OR nearest_workshop_id = CAST(:nearest_workshop_id AS BIGINT)
     )
     RETURNING id, photo_paths, photo_urls, audio_path, audio_url
+    """
+)
+
+BACKFILL_EMERGENCY_PRICES_SQL = text(
+    """
+    UPDATE emergency_reports
+    SET price = CASE
+        WHEN COALESCE(problem_type_standardized, problem_type) = 'Batería' THEN 50
+        WHEN COALESCE(problem_type_standardized, problem_type) = 'Neumático' THEN 50
+        WHEN COALESCE(problem_type_standardized, problem_type) = 'Combustible' THEN 60
+        WHEN COALESCE(problem_type_standardized, problem_type) = 'Motor' THEN 100
+        WHEN COALESCE(problem_type_standardized, problem_type) = 'Sistema eléctrico' THEN 90
+        WHEN COALESCE(problem_type_standardized, problem_type) = 'Accidente' THEN 150
+        WHEN COALESCE(problem_type_standardized, problem_type) = 'Cerrajería / llaves' THEN 80
+        ELSE price
+    END
+    WHERE price IS NULL
+      AND COALESCE(problem_type_standardized, problem_type) IN (
+        'Batería',
+        'Neumático',
+        'Combustible',
+        'Motor',
+        'Sistema eléctrico',
+        'Accidente',
+        'Cerrajería / llaves'
+      )
     """
 )
 
@@ -1205,6 +1237,7 @@ def init_database() -> None:
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS vehicle_name VARCHAR(160)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS vehicle_plate VARCHAR(40)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS problem_type VARCHAR(120)"))
+        connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS price INTEGER"))
         connection.execute(
             text(
                 """
@@ -1269,6 +1302,7 @@ def init_database() -> None:
         )
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_path VARCHAR(255)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_url VARCHAR(255)"))
+        connection.execute(BACKFILL_EMERGENCY_PRICES_SQL)
         connection.execute(CREATE_EMERGENCY_ASSIGNMENTS_TABLE_SQL)
         connection.execute(CREATE_DEVICE_FCM_TOKENS_TABLE_SQL)
         connection.execute(text("ALTER TABLE device_fcm_tokens ADD COLUMN IF NOT EXISTS user_id BIGINT"))

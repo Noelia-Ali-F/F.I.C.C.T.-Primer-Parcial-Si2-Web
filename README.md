@@ -16,6 +16,7 @@ Este proyecto se ejecuta usando Docker Compose.
 - `backend`: API FastAPI y configuracion de acceso a PostgreSQL
 - `docker-compose.yml`: entorno de desarrollo con frontend, backend y base de datos
 - `backend/API.md`: documentacion de endpoints del backend
+- `FLUJO_PROYECTO.md`: comentario general del flujo del sistema y sus modulos principales
 
 ## Desarrollo con Docker
 

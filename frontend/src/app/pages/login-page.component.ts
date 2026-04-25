@@ -26,14 +26,14 @@ import { ValidationDialogComponent } from './validation-dialog.component';
               <button
                 type="button"
                 [class.is-active]="selectedRole === 'socio'"
-                (click)="selectedRole = 'socio'"
+                (click)="selectRole('socio')"
               >
                 Socio del Taller
               </button>
               <button
                 type="button"
                 [class.is-active]="selectedRole === 'admin'"
-                (click)="selectedRole = 'admin'"
+                (click)="selectRole('admin')"
               >
                 Administrador
               </button>
@@ -76,6 +76,9 @@ import { ValidationDialogComponent } from './validation-dialog.component';
               </label>
 
               <p class="login-clean-feedback" *ngIf="submitMessage">{{ submitMessage }}</p>
+              <p class="login-clean-feedback" *ngIf="!submitMessage && selectedAttemptsRemaining < 3">
+                Te quedan {{ selectedAttemptsRemaining }} intento{{ selectedAttemptsRemaining === 1 ? '' : 's' }} para este acceso.
+              </p>
 
               <button class="button primary login-clean-submit" type="submit" [disabled]="isSubmitting">
                 {{ isSubmitting ? 'Ingresando...' : 'Ingresar' }}
@@ -107,12 +110,26 @@ export class LoginPageComponent {
   showPassword = false;
   submitMessage = '';
   isSubmitting = false;
+  private readonly maxLoginAttempts = 3;
+  private loginAttemptsRemaining: Record<'socio' | 'admin', number> = {
+    socio: this.maxLoginAttempts,
+    admin: this.maxLoginAttempts,
+  };
 
   form = {
     email: '',
     password: '',
     remember: true,
   };
+
+  get selectedAttemptsRemaining(): number {
+    return this.loginAttemptsRemaining[this.selectedRole];
+  }
+
+  selectRole(role: 'socio' | 'admin'): void {
+    this.selectedRole = role;
+    this.submitMessage = '';
+  }
 
   submitLogin(loginForm: NgForm): void {
     if (this.isSubmitting) {
@@ -127,6 +144,11 @@ export class LoginPageComponent {
       return;
     }
 
+    if (this.selectedAttemptsRemaining <= 0) {
+      this.submitMessage = 'Se agotaron los 3 intentos para este acceso. Intenta nuevamente mas tarde.';
+      return;
+    }
+
     this.isSubmitting = true;
     this.submitMessage = '';
     clearStoredSession();
@@ -135,6 +157,7 @@ export class LoginPageComponent {
       .post<LoginResponse>(this.loginApiUrl, {
         email: this.form.email.trim().toLowerCase(),
         password: this.form.password,
+        account_type: this.selectedRole === 'admin' ? 'admin' : 'workshop',
       })
       .subscribe({
         next: async (response) => {
@@ -161,6 +184,7 @@ export class LoginPageComponent {
             return;
           }
 
+          this.resetSelectedAttempts();
           this.persistSession(response);
           this.isSubmitting = false;
           await this.router.navigate(['/dashboard']);
@@ -188,8 +212,37 @@ export class LoginPageComponent {
           this.submitMessage =
             (typeof detail === 'string' ? detail : detail?.message) ||
             'No se pudo iniciar sesión. Inténtalo nuevamente.';
+          this.updateAttemptsFromError(detail);
         },
       });
+  }
+
+  private updateAttemptsFromError(detail: unknown): void {
+    if (!detail || typeof detail !== 'object') {
+      this.decreaseSelectedAttempts();
+      return;
+    }
+
+    const parsedDetail = detail as {
+      account_type?: string;
+      remaining_attempts?: number;
+    };
+    const targetRole = parsedDetail.account_type === 'admin' ? 'admin' : 'socio';
+
+    if (typeof parsedDetail.remaining_attempts === 'number') {
+      this.loginAttemptsRemaining[targetRole] = Math.max(0, parsedDetail.remaining_attempts);
+      return;
+    }
+
+    this.decreaseSelectedAttempts();
+  }
+
+  private decreaseSelectedAttempts(): void {
+    this.loginAttemptsRemaining[this.selectedRole] = Math.max(0, this.selectedAttemptsRemaining - 1);
+  }
+
+  private resetSelectedAttempts(): void {
+    this.loginAttemptsRemaining[this.selectedRole] = this.maxLoginAttempts;
   }
 
   private getMissingFields(): string[] {

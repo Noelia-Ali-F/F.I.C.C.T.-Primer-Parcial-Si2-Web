@@ -654,6 +654,7 @@ Registra una solicitud de emergencia enviada desde la app movil usando `multipar
 - `vehicle_name`: nombre mostrado del vehiculo
 - `vehicle_plate`: placa del vehiculo
 - `problem_type`: tipo de problema o emergencia
+- `price`: opcional, precio estimado del servicio. Si no llega y el backend puede clasificar el problema, se completa con el precio base
 - `problem_type_standardized`: calculado por backend a partir de `problem_type` y `description`; no es necesario enviarlo
 - `photo_problem_type_standardized`: calculado por backend desde las fotos cuando la clasificacion visual esta activada
 - `photo_classification_confidence`: confianza numerica de la clasificacion visual, entre `0.0` y `1.0`
@@ -687,6 +688,18 @@ Si `problem_type` es `Otro`, el cliente movil puede complementar el detalle en `
 En ese caso, el backend intenta clasificarlo automaticamente a una de las 7 categorias estandarizadas y la guarda en `problem_type_standardized`.
 Si hay fotos y la clasificacion visual esta activada, el backend tambien intenta inferir `photo_problem_type_standardized` y usa esa sugerencia como apoyo cuando el texto no alcanza para decidir.
 
+#### Precios estimados enviados por movil
+
+- `Batería`: `50`
+- `Neumático`: `50`
+- `Combustible`: `60`
+- `Motor`: `100`
+- `Sistema eléctrico`: `90`
+- `Accidente`: `150`
+- `Cerrajería / llaves`: `80`
+
+Para `Otro`, `price` puede no enviarse. Si el backend logra clasificarlo en `problem_type_standardized`, guardara el precio base de esa categoria; si no logra clasificarlo, devolvera `price: null` y queda como servicio a cotizar.
+
 #### Nombres de campos aceptados para archivos
 
 - Fotos: `photos`
@@ -715,6 +728,7 @@ Codigo: `201 Created`
   "vehicle_name": "Toyota Corolla",
   "vehicle_plate": "1234ABC",
   "problem_type": "Neumático",
+  "price": 50,
   "problem_type_standardized": "Neumático",
   "photo_problem_type_standardized": "Neumático",
   "photo_classification_confidence": 0.93,
@@ -760,6 +774,7 @@ curl -X POST http://localhost:8000/api/emergencias \
   -F "vehicle_name=Toyota Corolla" \
   -F "vehicle_plate=1234ABC" \
   -F "problem_type=Sistema eléctrico" \
+  -F "price=90" \
   -F "description=El auto no enciende y las luces del tablero parpadean" \
   -F "latitude=-17.7833" \
   -F "longitude=-63.1821" \

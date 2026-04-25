@@ -9,11 +9,21 @@ import { APP_SESSION_STORAGE_KEY, AppSession, clearStoredSession, parseStoredSes
 
 declare const L: any;
 
-type DashboardSection = 'dashboard' | 'workshops' | 'technicians' | 'clients' | 'maintenance' | 'emergencies';
+type DashboardSection =
+  | 'dashboard'
+  | 'workshops'
+  | 'technicians'
+  | 'clients'
+  | 'maintenance'
+  | 'emergencies'
+  | 'reports'
+  | 'audit';
 type TechnicianStatus = 'disponible' | 'ocupado' | 'fuera_de_servicio';
 type TechnicianFilter = 'activos' | 'todos' | 'historial';
+type MaintenanceFilter = 'todas' | 'pendiente' | 'activo' | 'rechazado' | 'historial';
 type WorkshopApprovalStatus = 'pendiente' | 'activo' | 'rechazado';
 type ClientStatus = 'active' | 'suspended';
+type AuditTone = 'info' | 'success' | 'warning' | 'danger';
 
 const TECHNICIAN_SPECIALTY_OPTIONS = [
   'Batería',
@@ -58,6 +68,14 @@ type DashboardItem = {
   priority: 'Alta' | 'Media' | 'Seguimiento';
 };
 
+type AuditItem = {
+  title: string;
+  detail: string;
+  meta: string;
+  createdAt: string;
+  tone: AuditTone;
+};
+
 type MaintenanceRequest = {
   id: number;
   code: string;
@@ -66,9 +84,11 @@ type MaintenanceRequest = {
   location: string;
   priority: 'Alta' | 'Media' | 'Baja';
   status: 'pendiente' | 'activo' | 'rechazado';
+  price: number | null;
   distance: string;
   detail: string;
   reportedAt: string;
+  createdAt: string;
   latitude: number | null;
   longitude: number | null;
   nearestWorkshopId: number | null;
@@ -96,6 +116,7 @@ type EmergencyReport = {
   vehicle_name: string;
   vehicle_plate: string;
   problem_type: string;
+  price: number | null;
   emergency_status: 'pendiente' | 'activo' | 'rechazado' | null;
   problem_type_standardized: string | null;
   description: string | null;
@@ -199,7 +220,11 @@ type WorkshopFormModel = {
   standalone: true,
   imports: [CommonModule, DatePipe, FormsModule, RouterLink],
   template: `
-    <main class="dashboard-page" [class.is-sidebar-collapsed]="isSidebarCollapsed">
+    <main
+      class="dashboard-page"
+      [class.is-sidebar-collapsed]="isSidebarCollapsed"
+      [class.is-exporting-report]="isExportingReport"
+    >
       <aside class="dashboard-sidebar" [class.is-collapsed]="isSidebarCollapsed">
         <a class="dashboard-brand" routerLink="/">
           <span class="dashboard-brand-mark">
@@ -218,13 +243,14 @@ type WorkshopFormModel = {
               type="button"
               [class.is-active]="selectedSection === 'dashboard'"
               (click)="selectSection('dashboard')"
+              *ngIf="canAccessSection('dashboard')"
             >
               <span class="dashboard-menu-icon">⌂</span>
               <span>Dashboard</span>
             </button>
           </div>
 
-          <div class="dashboard-menu-group">
+          <div class="dashboard-menu-group" *ngIf="canAccessSection('workshops')">
             <button
               class="dashboard-menu-link"
               type="button"
@@ -250,7 +276,7 @@ type WorkshopFormModel = {
             </div>
           </div>
 
-          <div class="dashboard-menu-group">
+          <div class="dashboard-menu-group" *ngIf="canAccessSection('technicians')">
             <button
               class="dashboard-menu-link"
               type="button"
@@ -275,7 +301,7 @@ type WorkshopFormModel = {
             </div>
           </div>
 
-          <div class="dashboard-menu-group">
+          <div class="dashboard-menu-group" *ngIf="canAccessSection('clients')">
             <button
               class="dashboard-menu-link"
               type="button"
@@ -300,19 +326,7 @@ type WorkshopFormModel = {
             </div>
           </div>
 
-          <div class="dashboard-menu-group">
-            <button
-              class="dashboard-menu-link"
-              type="button"
-              [class.is-active]="selectedSection === 'maintenance'"
-              (click)="selectSection('maintenance')"
-            >
-              <span class="dashboard-menu-icon">⚙</span>
-              <span>Mantenimiento</span>
-            </button>
-          </div>
-
-          <div class="dashboard-menu-group">
+          <div class="dashboard-menu-group" *ngIf="canAccessSection('emergencies')">
             <button
               class="dashboard-menu-link"
               type="button"
@@ -338,18 +352,54 @@ type WorkshopFormModel = {
             </div>
           </div>
 
-          <div class="dashboard-menu-group">
-            <button class="dashboard-menu-link" type="button">
+          <div class="dashboard-menu-group" *ngIf="canAccessSection('reports')">
+            <button
+              class="dashboard-menu-link"
+              type="button"
+              [class.is-active]="selectedSection === 'reports'"
+              (click)="selectSection('reports')"
+            >
               <span class="dashboard-menu-icon">▥</span>
               <span>Reportes</span>
             </button>
+
+            <div class="dashboard-submenu">
+              <button
+                class="dashboard-submenu-item"
+                type="button"
+                [class.is-active]="selectedSection === 'reports'"
+                (click)="selectSection('reports')"
+              >
+                <span class="dashboard-submenu-bullet"></span>
+                <span>Trabajos realizados</span>
+                <strong>{{ reportWorkRequests.length | number: '2.0-0' }}</strong>
+              </button>
+            </div>
           </div>
 
-          <div class="dashboard-menu-group">
-            <button class="dashboard-menu-link" type="button">
+          <div class="dashboard-menu-group" *ngIf="canAccessSection('audit')">
+            <button
+              class="dashboard-menu-link"
+              type="button"
+              [class.is-active]="selectedSection === 'audit'"
+              (click)="selectSection('audit')"
+            >
               <span class="dashboard-menu-icon">▣</span>
               <span>Bitacora</span>
             </button>
+
+            <div class="dashboard-submenu">
+              <button
+                class="dashboard-submenu-item"
+                type="button"
+                [class.is-active]="selectedSection === 'audit'"
+                (click)="selectSection('audit')"
+              >
+                <span class="dashboard-submenu-bullet"></span>
+                <span>Actividad reciente</span>
+                <strong>{{ auditItems.length | number: '2.0-0' }}</strong>
+              </button>
+            </div>
           </div>
         </nav>
 
@@ -556,6 +606,14 @@ type WorkshopFormModel = {
                   >
                     Rechazado
                   </button>
+                  <button
+                    type="button"
+                    class="dashboard-secondary-button"
+                    [class.is-active]="maintenanceFilter === 'historial'"
+                    (click)="setMaintenanceFilter('historial')"
+                  >
+                    Historial
+                  </button>
                 </div>
               </div>
             </section>
@@ -646,6 +704,143 @@ type WorkshopFormModel = {
                   </div>
                 </div>
               </div>
+            </div>
+          </article>
+
+          <article
+            class="dashboard-panel dashboard-panel-wide reports-print-area"
+            *ngIf="selectedSection === 'reports'"
+          >
+            <div class="dashboard-panel-head">
+              <div>
+                <p class="dashboard-panel-kicker">Reportes</p>
+                <h2>Trabajos realizados</h2>
+              </div>
+              <div class="dashboard-toolbar">
+                <button class="dashboard-refresh-button" type="button" (click)="loadEmergencies()">
+                  Actualizar
+                </button>
+                <button class="dashboard-refresh-button" type="button" (click)="exportReportsPdf()">
+                  Exportar PDF
+                </button>
+              </div>
+            </div>
+
+            <section class="report-summary-grid">
+              <article class="report-summary-item">
+                <span>Socio / taller</span>
+                <strong>{{ reportWorkshopName }}</strong>
+              </article>
+              <article class="report-summary-item">
+                <span>Trabajos</span>
+                <strong>{{ reportWorkRequests.length }}</strong>
+              </article>
+              <article class="report-summary-item">
+                <span>Total estimado</span>
+                <strong>{{ formatReportPrice(reportTotalAmount) }}</strong>
+              </article>
+              <article class="report-summary-item">
+                <span>Generado</span>
+                <strong>{{ reportGeneratedAt | date: 'short' }}</strong>
+              </article>
+            </section>
+
+            <p class="dashboard-loading" *ngIf="isEmergenciesLoading">Cargando trabajos realizados...</p>
+            <p class="dashboard-empty" *ngIf="!isEmergenciesLoading && !reportWorkRequests.length">
+              No hay trabajos realizados para este taller.
+            </p>
+
+            <div class="dashboard-table-wrap report-table-wrap" *ngIf="!isEmergenciesLoading && reportWorkRequests.length">
+              <table class="dashboard-table report-table">
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Fecha</th>
+                    <th>Cliente</th>
+                    <th>Vehículo</th>
+                    <th>Problema</th>
+                    <th>Técnico</th>
+                    <th>Estado</th>
+                    <th>Monto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let request of reportWorkRequests">
+                    <td data-label="Código">
+                      <span class="dashboard-id-chip">{{ request.code }}</span>
+                    </td>
+                    <td data-label="Fecha">{{ request.createdAt | date: 'short' }}</td>
+                    <td data-label="Cliente">{{ request.client }}</td>
+                    <td data-label="Vehículo">{{ request.vehicle }}</td>
+                    <td data-label="Problema">
+                      {{ request.standardizedProblemType || request.problemType }}
+                    </td>
+                    <td data-label="Técnico">
+                      {{ request.assignedTechnicianName || 'Sin técnico asignado' }}
+                    </td>
+                    <td data-label="Estado">
+                      <span class="maintenance-request-status" [attr.data-status]="request.status">
+                        {{ request.status | titlecase }}
+                      </span>
+                    </td>
+                    <td data-label="Monto">{{ formatReportPrice(request.price) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="dashboard-panel dashboard-panel-wide" *ngIf="selectedSection === 'audit'">
+            <div class="dashboard-panel-head">
+              <div>
+                <p class="dashboard-panel-kicker">Bitacora</p>
+                <h2>Actividad reciente</h2>
+              </div>
+              <div class="dashboard-toolbar">
+                <button class="dashboard-refresh-button" type="button" (click)="refreshAudit()">
+                  Actualizar
+                </button>
+              </div>
+            </div>
+
+            <section class="audit-summary-grid">
+              <article class="audit-summary-item">
+                <span>Eventos</span>
+                <strong>{{ auditItems.length }}</strong>
+              </article>
+              <article class="audit-summary-item">
+                <span>Emergencias</span>
+                <strong>{{ maintenanceRequests.length }}</strong>
+              </article>
+              <article class="audit-summary-item">
+                <span>Técnicos</span>
+                <strong>{{ technicians.length }}</strong>
+              </article>
+              <article class="audit-summary-item">
+                <span>Último evento</span>
+                <strong>{{ auditLatestLabel }}</strong>
+              </article>
+            </section>
+
+            <p class="dashboard-loading" *ngIf="isEmergenciesLoading || isTechniciansLoading || isLoading || isClientsLoading">
+              Cargando actividad...
+            </p>
+            <p class="dashboard-empty" *ngIf="!isAuditLoading && !auditItems.length">
+              Todavía no hay movimientos registrados para mostrar.
+            </p>
+
+            <div class="audit-timeline" *ngIf="!isAuditLoading && auditItems.length">
+              <article class="audit-item" *ngFor="let item of auditItems" [attr.data-tone]="item.tone">
+                <span class="audit-dot"></span>
+                <div class="audit-card">
+                  <div class="audit-card-head">
+                    <strong>{{ item.title }}</strong>
+                    <span>{{ item.createdAt | date: 'short' }}</span>
+                  </div>
+                  <p>{{ item.detail }}</p>
+                  <small>{{ item.meta }}</small>
+                </div>
+              </article>
             </div>
           </article>
 
@@ -1529,13 +1724,14 @@ export class DashboardPageComponent implements OnDestroy {
   maintenanceRequests: MaintenanceRequest[] = [];
 
   maintenanceSearch = '';
-  maintenanceFilter: 'todas' | 'pendiente' | 'activo' | 'rechazado' = 'todas';
+  maintenanceFilter: MaintenanceFilter = 'todas';
   selectedMaintenanceRequestId: number | null = null;
   selectedEmergencyTechnicianId: number | null = null;
   isEditingEmergencyAssignment = false;
 
   selectedSection: DashboardSection = 'dashboard';
   isSidebarCollapsed = false;
+  isExportingReport = false;
   workshops: WorkshopRegistration[] = [];
   technicians: Technician[] = [];
   clients: Client[] = [];
@@ -1693,6 +1889,14 @@ export class DashboardPageComponent implements OnDestroy {
       return 'Solicitudes de emergencia';
     }
 
+    if (this.selectedSection === 'reports') {
+      return 'Reportes';
+    }
+
+    if (this.selectedSection === 'audit') {
+      return 'Bitacora';
+    }
+
     return 'Resumen general';
   }
 
@@ -1708,11 +1912,22 @@ export class DashboardPageComponent implements OnDestroy {
     return this.isWorkshopSession ? this.adminSession?.id ?? null : null;
   }
 
+  canAccessSection(section: DashboardSection): boolean {
+    if (!this.isWorkshopSession) {
+      return true;
+    }
+
+    return section === 'clients' || section === 'emergencies' || section === 'reports';
+  }
+
   get maintenanceRequestsFiltered(): MaintenanceRequest[] {
     return this.maintenanceRequests.filter((request) => {
       const matchesSearch = [request.code, request.client, request.vehicle, request.location, request.detail]
         .some((value) => value.toLowerCase().includes(this.maintenanceSearch.toLowerCase()));
-      const matchesFilter = this.maintenanceFilter === 'todas' || request.status === this.maintenanceFilter;
+      const matchesFilter =
+        this.maintenanceFilter === 'todas' ||
+        (this.maintenanceFilter === 'historial' && request.status !== 'pendiente') ||
+        request.status === this.maintenanceFilter;
       return matchesSearch && matchesFilter;
     });
   }
@@ -1737,6 +1952,114 @@ export class DashboardPageComponent implements OnDestroy {
     ];
   }
 
+  get reportWorkRequests(): MaintenanceRequest[] {
+    return this.maintenanceRequests.filter((request) => request.status === 'activo');
+  }
+
+  get reportTotalAmount(): number {
+    return this.reportWorkRequests.reduce((total, request) => total + (request.price ?? 0), 0);
+  }
+
+  get reportWorkshopName(): string {
+    return this.isWorkshopSession ? this.userDisplayName : 'Todos los talleres';
+  }
+
+  get reportGeneratedAt(): Date {
+    return new Date();
+  }
+
+  get isAuditLoading(): boolean {
+    return this.isEmergenciesLoading || this.isTechniciansLoading || (!this.isWorkshopSession && (this.isLoading || this.isClientsLoading));
+  }
+
+  get auditItems(): AuditItem[] {
+    const items: AuditItem[] = [];
+
+    for (const request of this.maintenanceRequests) {
+      items.push({
+        title: `${request.code} registrada`,
+        detail: `${request.client} solicito atencion para ${request.vehicle}.`,
+        meta: `${request.problemType} · ${request.location}`,
+        createdAt: request.createdAt,
+        tone: request.status === 'rechazado' ? 'danger' : request.status === 'activo' ? 'success' : 'warning',
+      });
+
+      if (request.status === 'activo') {
+        items.push({
+          title: `${request.code} aceptada`,
+          detail: `${request.nearestWorkshopName || this.reportWorkshopName} acepto la emergencia.`,
+          meta: request.assignedTechnicianName
+            ? `Tecnico asignado: ${request.assignedTechnicianName}`
+            : 'Pendiente de asignacion tecnica',
+          createdAt: request.createdAt,
+          tone: 'success',
+        });
+      }
+
+      if (request.status === 'rechazado') {
+        items.push({
+          title: `${request.code} rechazada`,
+          detail: `${request.nearestWorkshopName || this.reportWorkshopName} rechazo la solicitud.`,
+          meta: request.problemType,
+          createdAt: request.createdAt,
+          tone: 'danger',
+        });
+      }
+    }
+
+    for (const technician of this.technicians) {
+      items.push({
+        title: `Tecnico ${this.statusLabel(technician.status).toLowerCase()}`,
+        detail: technician.full_name,
+        meta: `${technician.specialty} · ${technician.phone}`,
+        createdAt: technician.updated_at || technician.created_at,
+        tone: technician.status === 'disponible' ? 'success' : technician.status === 'ocupado' ? 'warning' : 'info',
+      });
+    }
+
+    if (!this.isWorkshopSession) {
+      for (const workshop of this.workshops) {
+        items.push({
+          title: `Taller ${this.workshopApprovalLabel(workshop.approval_status).toLowerCase()}`,
+          detail: workshop.workshop_name,
+          meta: `${workshop.zone} · ${workshop.specialty}`,
+          createdAt: workshop.created_at,
+          tone:
+            workshop.approval_status === 'activo'
+              ? 'success'
+              : workshop.approval_status === 'rechazado'
+                ? 'danger'
+                : 'warning',
+        });
+      }
+
+      for (const client of this.clients) {
+        items.push({
+          title: `Cliente ${this.clientStatusLabel(client.status).toLowerCase()}`,
+          detail: client.full_name,
+          meta: `${client.email} · ${client.phone}`,
+          createdAt: client.updated_at || client.created_at,
+          tone: client.status === 'active' ? 'success' : 'warning',
+        });
+      }
+    }
+
+    return items
+      .filter((item) => !Number.isNaN(new Date(item.createdAt).getTime()))
+      .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
+      .slice(0, 80);
+  }
+
+  get auditLatestLabel(): string {
+    const latest = this.auditItems[0];
+
+    if (!latest) {
+      return 'Sin eventos';
+    }
+
+    return this.relativeTimeLabel(latest.createdAt);
+  }
+
   selectMaintenanceRequest(request: MaintenanceRequest): void {
     this.selectedMaintenanceRequestId = request.id;
     this.selectedEmergencyTechnicianId = request.assignedTechnicianId;
@@ -1746,13 +2069,39 @@ export class DashboardPageComponent implements OnDestroy {
     this.renderSelectedEmergencyMap();
   }
 
-  setMaintenanceFilter(filter: 'todas' | 'pendiente' | 'activo' | 'rechazado'): void {
+  setMaintenanceFilter(filter: MaintenanceFilter): void {
     this.maintenanceFilter = filter;
   }
 
   clearMaintenanceSearch(): void {
     this.maintenanceSearch = '';
     this.maintenanceFilter = this.isWorkshopSession ? 'pendiente' : 'todas';
+  }
+
+  exportReportsPdf(): void {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+
+    const previousTitle = document.title;
+    this.isExportingReport = true;
+    document.title = `Reporte trabajos realizados - ${this.reportWorkshopName}`;
+
+    window.setTimeout(() => {
+      window.print();
+      document.title = previousTitle;
+      this.isExportingReport = false;
+    });
+  }
+
+  refreshAudit(): void {
+    this.loadEmergencies();
+    this.loadTechnicians();
+
+    if (!this.isWorkshopSession) {
+      this.loadWorkshops();
+      this.loadClients();
+    }
   }
 
   closeEmergencyModal(): void {
@@ -1942,9 +2291,11 @@ export class DashboardPageComponent implements OnDestroy {
       location: addressParts.join(' · ') || 'Ubicacion pendiente',
       priority: this.priorityFromProblemType(report.problem_type_standardized || report.problem_type),
       status: report.emergency_status ?? 'pendiente',
+      price: report.price,
       distance: this.formatDistance(report.nearest_workshop_distance_meters),
       detail,
       reportedAt: this.relativeTimeLabel(report.created_at),
+      createdAt: report.created_at,
       latitude: report.latitude,
       longitude: report.longitude,
       nearestWorkshopId: report.nearest_workshop_id,
@@ -2093,6 +2444,14 @@ export class DashboardPageComponent implements OnDestroy {
     }
 
     return `${(distanceMeters / 1000).toFixed(1).replace('.', ',')} km`;
+  }
+
+  formatReportPrice(price: number | null): string {
+    if (price === null || Number.isNaN(price)) {
+      return 'A cotizar';
+    }
+
+    return `Bs ${price.toLocaleString('es-BO', { maximumFractionDigits: 0 })}`;
   }
 
   private relativeTimeLabel(createdAt: string): string {
@@ -2487,9 +2846,14 @@ export class DashboardPageComponent implements OnDestroy {
   }
 
   selectSection(section: DashboardSection): void {
+    if (!this.canAccessSection(section)) {
+      this.selectedSection = 'emergencies';
+      return;
+    }
+
     this.selectedSection = section;
 
-    if (section === 'emergencies' && !this.maintenanceRequests.length) {
+    if ((section === 'emergencies' || section === 'reports' || section === 'audit') && !this.maintenanceRequests.length) {
       this.loadEmergencies();
     }
 

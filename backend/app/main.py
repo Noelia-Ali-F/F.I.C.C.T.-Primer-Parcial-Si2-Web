@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 import base64
 import hashlib
 import json
@@ -97,6 +97,10 @@ PROTECTED_ADMIN_ROLE = "admin"
 PROTECTED_ADMIN_ID = 0
 WORKSHOP_ROLE = "workshop"
 _firebase_app_initialized = False
+LOGIN_MAX_ATTEMPTS = 3
+LOGIN_LOCKOUT_MINUTES = 10
+_login_attempts_lock = Lock()
+_login_attempts: dict[str, dict[str, object]] = {}
 
 # Limites y formatos aceptados para el flujo de emergencias.
 MAX_EMERGENCY_PHOTOS = 6
@@ -115,6 +119,15 @@ ALLOWED_EMERGENCY_PROBLEM_TYPES = {
     "Otro",
 }
 STANDARDIZED_EMERGENCY_PROBLEM_TYPES = ALLOWED_EMERGENCY_PROBLEM_TYPES - {"Otro"}
+EMERGENCY_BASE_PRICES = {
+    "Batería": 50,
+    "Neumático": 50,
+    "Combustible": 60,
+    "Motor": 100,
+    "Sistema eléctrico": 90,
+    "Accidente": 150,
+    "Cerrajería / llaves": 80,
+}
 _whisper_model = None
 _whisper_model_lock = Lock()
 
@@ -240,6 +253,7 @@ class ClientRegistrationResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=255)
+    account_type: str | None = Field(default=None, pattern="^(admin|workshop|client)$")
 
 
 class AccountTypeLookupRequest(BaseModel):
@@ -424,6 +438,7 @@ class EmergencyReportResponse(BaseModel):
     vehicle_name: str
     vehicle_plate: str
     problem_type: str
+    price: int | None = None
     emergency_status: str | None = None
     problem_type_standardized: str | None = None
     photo_problem_type_standardized: str | None = None
@@ -508,6 +523,90 @@ def verify_password(password: str, password_hash: str) -> bool:
     return secrets.compare_digest(candidate_digest, expected_digest)
 
 
+def login_attempt_key(account_type: str, email: str) -> str:
+    return f"{account_type}:{email.lower().strip()}"
+
+
+def get_login_attempt_state(account_type: str, email: str) -> dict[str, object]:
+    key = login_attempt_key(account_type, email)
+
+    with _login_attempts_lock:
+        state = _login_attempts.get(key)
+
+        if not state:
+            return {"attempts": 0, "locked_until": None}
+
+        locked_until = state.get("locked_until")
+        if isinstance(locked_until, datetime) and locked_until <= datetime.utcnow():
+            _login_attempts.pop(key, None)
+            return {"attempts": 0, "locked_until": None}
+
+        return dict(state)
+
+
+def ensure_login_not_locked(account_type: str, email: str) -> None:
+    state = get_login_attempt_state(account_type, email)
+    locked_until = state.get("locked_until")
+
+    if not isinstance(locked_until, datetime):
+        return
+
+    remaining_seconds = max(1, int((locked_until - datetime.utcnow()).total_seconds()))
+    remaining_minutes = max(1, (remaining_seconds + 59) // 60)
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail={
+            "message": f"Demasiados intentos fallidos. Intenta nuevamente en {remaining_minutes} min.",
+            "code": "LOGIN_ATTEMPTS_EXCEEDED",
+            "account_type": account_type,
+            "remaining_attempts": 0,
+            "locked_until": locked_until.isoformat() + "Z",
+        },
+    )
+
+
+def register_failed_login_attempt(account_type: str, email: str) -> None:
+    key = login_attempt_key(account_type, email)
+
+    with _login_attempts_lock:
+        state = _login_attempts.get(key, {"attempts": 0, "locked_until": None})
+        attempts = int(state.get("attempts") or 0) + 1
+        remaining_attempts = max(0, LOGIN_MAX_ATTEMPTS - attempts)
+
+        if attempts >= LOGIN_MAX_ATTEMPTS:
+            locked_until = datetime.utcnow() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+            _login_attempts[key] = {"attempts": attempts, "locked_until": locked_until}
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "message": f"Demasiados intentos fallidos. Intenta nuevamente en {LOGIN_LOCKOUT_MINUTES} min.",
+                    "code": "LOGIN_ATTEMPTS_EXCEEDED",
+                    "account_type": account_type,
+                    "remaining_attempts": 0,
+                    "locked_until": locked_until.isoformat() + "Z",
+                },
+            )
+
+        _login_attempts[key] = {"attempts": attempts, "locked_until": None}
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "message": "Correo o contraseña incorrectos",
+            "code": "INVALID_CREDENTIALS",
+            "account_type": account_type,
+            "remaining_attempts": remaining_attempts,
+        },
+    )
+
+
+def reset_login_attempts(account_type: str, email: str) -> None:
+    key = login_attempt_key(account_type, email)
+
+    with _login_attempts_lock:
+        _login_attempts.pop(key, None)
+
+
 def normalize_plate(plate: str) -> str:
     return plate.strip().upper()
 
@@ -561,11 +660,24 @@ def standardize_problem_type(
         return None
 
     rules: list[tuple[str, tuple[str, ...]]] = [
-        ("Batería", ("bateria", "arranque", "no enciende", "sin corriente", "descargada", "pasar corriente")),
-        ("Neumático", ("neumatico", "llanta", "pinch", "rueda", "revent", "desinflad")),
-        ("Combustible", ("combustible", "gasolina", "diesel", "tanque", "sin gasolina", "sin diesel")),
-        ("Motor", ("motor", "sobrecalent", "humo", "temperatura", "radiador", "recalent")),
-        ("Sistema eléctrico", ("electrico", "eléctrico", "fusible", "cable", "corto", "tablero", "luces")),
+        (
+            "Batería",
+            (
+                "bateria",
+                "arranque",
+                "no enciende",
+                "no quiere encender",
+                "no arranca",
+                "sin corriente",
+                "descargada",
+                "pasar corriente",
+                "se apago",
+            ),
+        ),
+        ("Neumático", ("neumatico", "llanta", "pinch", "rueda", "revent", "desinflad", "goma")),
+        ("Combustible", ("combustible", "gasolina", "diesel", "tanque", "sin gasolina", "sin diesel", "sin nafta")),
+        ("Motor", ("motor", "sobrecalent", "humo", "temperatura", "radiador", "recalent", "aceite")),
+        ("Sistema eléctrico", ("electrico", "eléctrico", "fusible", "cable", "corto", "tablero", "luces", "alternador")),
         ("Accidente", ("accidente", "choque", "colision", "colisión", "impacto", "atropell")),
         ("Cerrajería / llaves", ("llave", "llaves", "cerrajer", "cerrajeria", "cerrado", "quedaron dentro")),
     ]
@@ -695,6 +807,16 @@ def determine_standardized_problem_type(
         audio_transcript=audio_transcript,
         photo_problem_type_standardized=photo_problem_type_standardized,
     )
+
+
+def resolve_emergency_price(price: int | None, standardized_problem_type: str | None) -> int | None:
+    if price is not None:
+        return price
+
+    if standardized_problem_type is None:
+        return None
+
+    return EMERGENCY_BASE_PRICES.get(standardized_problem_type)
 
 
 def get_whisper_model():
@@ -1216,6 +1338,7 @@ def register_emergency(
     vehicle_name: str = Form(min_length=1, max_length=160),
     vehicle_plate: str = Form(min_length=3, max_length=40),
     problem_type: str = Form(min_length=2, max_length=120),
+    price: int | None = Form(default=None, ge=0),
     description: str | None = Form(default=None, min_length=3, max_length=4000),
     latitude: float | None = Form(default=None, ge=-90, le=90),
     longitude: float | None = Form(default=None, ge=-180, le=180),
@@ -1273,12 +1396,14 @@ def register_emergency(
             audio_transcript=audio_transcript,
             photo_problem_type_standardized=photo_problem_type_standardized,
         )
+        resolved_price = resolve_emergency_price(price, standardized_problem_type)
 
         payload = {
             "client_id": client_id,
             "vehicle_name": vehicle_name.strip(),
             "vehicle_plate": normalize_plate(vehicle_plate),
             "problem_type": normalized_problem_type,
+            "price": resolved_price,
             "emergency_status": "pendiente",
             "problem_type_standardized": standardized_problem_type,
             "photo_problem_type_standardized": photo_problem_type_standardized,
@@ -1946,14 +2071,18 @@ def remove_client(client_id: int) -> None:
 )
 def login(payload: LoginRequest) -> LoginResponse:
     normalized_email = payload.email.lower().strip()
+    requested_account_type = payload.account_type
 
     if is_protected_admin_email(normalized_email):
-        if payload.password != settings.protected_admin_password:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Correo o contraseña incorrectos",
-            )
+        ensure_login_not_locked(PROTECTED_ADMIN_ROLE, normalized_email)
 
+        if requested_account_type and requested_account_type != PROTECTED_ADMIN_ROLE:
+            register_failed_login_attempt(PROTECTED_ADMIN_ROLE, normalized_email)
+
+        if payload.password != settings.protected_admin_password:
+            register_failed_login_attempt(PROTECTED_ADMIN_ROLE, normalized_email)
+
+        reset_login_attempts(PROTECTED_ADMIN_ROLE, normalized_email)
         return LoginResponse(
             id=PROTECTED_ADMIN_ID,
             email=PROTECTED_ADMIN_EMAIL,
@@ -1969,6 +2098,11 @@ def login(payload: LoginRequest) -> LoginResponse:
     workshop = get_workshop_by_email(normalized_email)
 
     if workshop:
+        ensure_login_not_locked(WORKSHOP_ROLE, normalized_email)
+
+        if requested_account_type and requested_account_type != WORKSHOP_ROLE:
+            register_failed_login_attempt(WORKSHOP_ROLE, normalized_email)
+
         password_hash = workshop.get("password_hash")
         uses_initial_password = (
             isinstance(password_hash, str) and verify_password(settings.workshop_initial_password, password_hash)
@@ -1982,12 +2116,10 @@ def login(payload: LoginRequest) -> LoginResponse:
         if not accepts_missing_initial_password and (
             not isinstance(password_hash, str) or not verify_password(payload.password, password_hash)
         ):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Correo o contraseña incorrectos",
-            )
+            register_failed_login_attempt(WORKSHOP_ROLE, normalized_email)
 
         if uses_initial_password or accepts_missing_initial_password:
+            reset_login_attempts(WORKSHOP_ROLE, normalized_email)
             return LoginResponse(
                 id=int(workshop["id"]),
                 email=str(workshop["email"]),
@@ -2002,6 +2134,7 @@ def login(payload: LoginRequest) -> LoginResponse:
                 detail="El taller todavía no fue habilitado por el administrador",
             )
 
+        reset_login_attempts(WORKSHOP_ROLE, normalized_email)
         return LoginResponse(
             id=int(workshop["id"]),
             email=str(workshop["email"]),

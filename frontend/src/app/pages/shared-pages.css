@@ -2124,6 +2124,143 @@
   color: #9a2e23;
 }
 
+.report-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.report-summary-item {
+  display: grid;
+  gap: 0.45rem;
+  min-height: 6.2rem;
+  padding: 1rem;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(248, 250, 255, 0.98), rgba(255, 255, 255, 0.96));
+  border: 1px solid rgba(228, 235, 246, 0.96);
+}
+
+.report-summary-item span {
+  color: #6c7b99;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.report-summary-item strong {
+  align-self: end;
+  color: #173b72;
+  font-size: 1.2rem;
+}
+
+.report-table-wrap {
+  overflow-x: auto;
+}
+
+.report-table td,
+.report-table th {
+  white-space: nowrap;
+}
+
+.audit-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.audit-summary-item {
+  display: grid;
+  gap: 0.45rem;
+  min-height: 5.8rem;
+  padding: 1rem;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(248, 250, 255, 0.98), rgba(255, 255, 255, 0.96));
+  border: 1px solid rgba(228, 235, 246, 0.96);
+}
+
+.audit-summary-item span {
+  color: #6c7b99;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.audit-summary-item strong {
+  align-self: end;
+  color: #173b72;
+  font-size: 1.2rem;
+}
+
+.audit-timeline {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.audit-item {
+  display: grid;
+  grid-template-columns: 1.2rem minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.audit-dot {
+  width: 0.82rem;
+  height: 0.82rem;
+  margin-top: 1rem;
+  border-radius: 50%;
+  background: #3d76d1;
+  box-shadow: 0 0 0 0.35rem rgba(61, 118, 209, 0.12);
+}
+
+.audit-item[data-tone='success'] .audit-dot {
+  background: #22a6a4;
+  box-shadow: 0 0 0 0.35rem rgba(34, 166, 164, 0.14);
+}
+
+.audit-item[data-tone='warning'] .audit-dot {
+  background: #f0c630;
+  box-shadow: 0 0 0 0.35rem rgba(240, 198, 48, 0.18);
+}
+
+.audit-item[data-tone='danger'] .audit-dot {
+  background: #bd3b32;
+  box-shadow: 0 0 0 0.35rem rgba(189, 59, 50, 0.14);
+}
+
+.audit-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 1rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(228, 235, 246, 0.96);
+}
+
+.audit-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.audit-card-head strong {
+  color: #173b72;
+}
+
+.audit-card-head span,
+.audit-card small {
+  color: #6c7b99;
+  font-size: 0.84rem;
+}
+
+.audit-card p {
+  margin: 0;
+  color: #53617d;
+  line-height: 1.5;
+}
+
 .maintenance-summary-column {
   display: grid;
   gap: 1rem;
@@ -3990,5 +4127,65 @@
 
   .dashboard-status-pill {
     justify-self: start;
+  }
+}
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  .dashboard-page.is-exporting-report {
+    display: block;
+    min-height: auto;
+    background: #ffffff;
+  }
+
+  .dashboard-page.is-exporting-report .dashboard-sidebar,
+  .dashboard-page.is-exporting-report .dashboard-topbar,
+  .dashboard-page.is-exporting-report .dashboard-stats,
+  .dashboard-page.is-exporting-report .dashboard-panel:not(.reports-print-area) {
+    display: none !important;
+  }
+
+  .dashboard-page.is-exporting-report .dashboard-content,
+  .dashboard-page.is-exporting-report .dashboard-grid {
+    display: block;
+    padding: 0;
+    margin: 0;
+    background: #ffffff;
+  }
+
+  .dashboard-page.is-exporting-report .reports-print-area {
+    display: block;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: #ffffff;
+  }
+
+  .dashboard-page.is-exporting-report .reports-print-area .dashboard-toolbar {
+    display: none !important;
+  }
+
+  .dashboard-page.is-exporting-report .report-summary-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .dashboard-page.is-exporting-report .report-summary-item,
+  .dashboard-page.is-exporting-report .dashboard-table-wrap,
+  .dashboard-page.is-exporting-report .dashboard-table tr {
+    box-shadow: none;
+  }
+
+  .dashboard-page.is-exporting-report .dashboard-table {
+    min-width: 0;
+  }
+
+  .dashboard-page.is-exporting-report .dashboard-table th,
+  .dashboard-page.is-exporting-report .dashboard-table td {
+    padding: 0.55rem;
+    font-size: 0.78rem;
   }
 }
