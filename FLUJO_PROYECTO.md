@@ -203,6 +203,13 @@ Precios actuales:
 
 Si el movil envia `price`, ese valor se respeta.
 
+En las vistas del sistema, el precio se divide de forma operativa:
+
+- `Servicio`: 10% del precio.
+- `Monto`: 90% del precio para el trabajo del taller.
+
+Ejemplo: si el precio base es 100, el sistema muestra `Servicio=10` y `Monto=90`.
+
 ## 9. Estados De Emergencias
 
 Las emergencias usan estos estados:
@@ -284,13 +291,15 @@ Datos mostrados:
 
 - Taller.
 - Cantidad de trabajos.
-- Total estimado.
+- Total por servicio.
+- Total por monto neto.
 - Fecha de generacion.
 - Cliente.
 - Vehiculo.
 - Problema.
 - Tecnico.
 - Estado.
+- Servicio.
 - Monto.
 
 La exportacion PDF se realiza desde el navegador usando impresion. Durante la impresion se oculta el encabezado del dashboard y solo se imprime el reporte.

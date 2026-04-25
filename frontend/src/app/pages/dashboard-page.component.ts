@@ -736,8 +736,12 @@ type WorkshopFormModel = {
                 <strong>{{ reportWorkRequests.length }}</strong>
               </article>
               <article class="report-summary-item">
-                <span>Total estimado</span>
-                <strong>{{ formatReportPrice(reportTotalAmount) }}</strong>
+                <span>Servicio</span>
+                <strong>{{ formatReportPrice(reportTotalServiceAmount) }}</strong>
+              </article>
+              <article class="report-summary-item">
+                <span>Monto</span>
+                <strong>{{ formatReportPrice(reportTotalNetAmount) }}</strong>
               </article>
               <article class="report-summary-item">
                 <span>Generado</span>
@@ -761,6 +765,7 @@ type WorkshopFormModel = {
                     <th>Problema</th>
                     <th>Técnico</th>
                     <th>Estado</th>
+                    <th>Servicio</th>
                     <th>Monto</th>
                   </tr>
                 </thead>
@@ -783,7 +788,8 @@ type WorkshopFormModel = {
                         {{ request.status | titlecase }}
                       </span>
                     </td>
-                    <td data-label="Monto">{{ formatReportPrice(request.price) }}</td>
+                    <td data-label="Servicio">{{ formatReportPrice(calculateReportServiceAmount(request.price)) }}</td>
+                    <td data-label="Monto">{{ formatReportPrice(calculateReportNetAmount(request.price)) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1511,6 +1517,8 @@ type WorkshopFormModel = {
               <p *ngIf="selectedMaintenanceRequest.standardizedProblemType">
                 <strong>Tipo estandarizado:</strong> {{ selectedMaintenanceRequest.standardizedProblemType }}
               </p>
+              <p><strong>Servicio:</strong> {{ formatReportPrice(calculateReportServiceAmount(selectedMaintenanceRequest.price)) }}</p>
+              <p><strong>Monto:</strong> {{ formatReportPrice(calculateReportNetAmount(selectedMaintenanceRequest.price)) }}</p>
             </div>
 
             <div class="emergency-detail-block">
@@ -1956,8 +1964,18 @@ export class DashboardPageComponent implements OnDestroy {
     return this.maintenanceRequests.filter((request) => request.status === 'activo');
   }
 
-  get reportTotalAmount(): number {
-    return this.reportWorkRequests.reduce((total, request) => total + (request.price ?? 0), 0);
+  get reportTotalServiceAmount(): number {
+    return this.reportWorkRequests.reduce(
+      (total, request) => total + (this.calculateReportServiceAmount(request.price) ?? 0),
+      0,
+    );
+  }
+
+  get reportTotalNetAmount(): number {
+    return this.reportWorkRequests.reduce(
+      (total, request) => total + (this.calculateReportNetAmount(request.price) ?? 0),
+      0,
+    );
   }
 
   get reportWorkshopName(): string {
@@ -2452,6 +2470,22 @@ export class DashboardPageComponent implements OnDestroy {
     }
 
     return `Bs ${price.toLocaleString('es-BO', { maximumFractionDigits: 0 })}`;
+  }
+
+  calculateReportServiceAmount(price: number | null): number | null {
+    if (price === null || Number.isNaN(price)) {
+      return null;
+    }
+
+    return Math.round(price * 0.1);
+  }
+
+  calculateReportNetAmount(price: number | null): number | null {
+    if (price === null || Number.isNaN(price)) {
+      return null;
+    }
+
+    return price - this.calculateReportServiceAmount(price)!;
   }
 
   private relativeTimeLabel(createdAt: string): string {

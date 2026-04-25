@@ -2126,7 +2126,7 @@
 
 .report-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
   gap: 0.85rem;
 }
 
@@ -4170,7 +4170,7 @@
   }
 
   .dashboard-page.is-exporting-report .report-summary-grid {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
   }
 
   .dashboard-page.is-exporting-report .report-summary-item,
