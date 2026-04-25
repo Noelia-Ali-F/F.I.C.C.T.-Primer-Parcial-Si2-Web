@@ -71,6 +71,7 @@ web_modules/
 .env
 .env.*
 !.env.example
+backend/firebase-service-account.json
 
 # Python
 __pycache__/

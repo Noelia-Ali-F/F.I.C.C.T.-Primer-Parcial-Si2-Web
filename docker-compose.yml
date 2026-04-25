@@ -26,10 +26,12 @@ services:
     env_file:
       - ./backend/.env
     ports:
-      - "8000:8000"
+      - "80:8000"
+      - "8787:8000"
     volumes:
       - ./backend/app:/app/app
       - ./backend/uploads:/app/uploads
+      - ./backend/firebase-service-account.json:/app/firebase-service-account.json:ro
     depends_on:
       db:
         condition: service_healthy
@@ -41,7 +43,7 @@ services:
     container_name: diagramador-frontend
     restart: unless-stopped
     ports:
-      - "4200:4200"
+      - "5656:5656"
     volumes:
       - ./frontend:/app
       - /app/node_modules

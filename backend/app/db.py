@@ -135,6 +135,20 @@ CREATE_EMERGENCY_ASSIGNMENTS_TABLE_SQL = text(
     """
 )
 
+CREATE_DEVICE_FCM_TOKENS_TABLE_SQL = text(
+    """
+    CREATE TABLE IF NOT EXISTS device_fcm_tokens (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL,
+        fcm_token TEXT NOT NULL UNIQUE,
+        platform VARCHAR(40) NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """
+)
+
 INSERT_WORKSHOP_SQL = text(
     """
     INSERT INTO workshop_registrations (
@@ -1048,6 +1062,54 @@ DELETE_EMERGENCY_REPORT_SQL = text(
     """
 )
 
+UPSERT_DEVICE_FCM_TOKEN_SQL = text(
+    """
+    INSERT INTO device_fcm_tokens (
+        user_id,
+        fcm_token,
+        platform,
+        is_active
+    )
+    VALUES (
+        :user_id,
+        :fcm_token,
+        :platform,
+        TRUE
+    )
+    ON CONFLICT (fcm_token)
+    DO UPDATE SET
+        user_id = EXCLUDED.user_id,
+        platform = EXCLUDED.platform,
+        is_active = TRUE,
+        updated_at = NOW()
+    RETURNING
+        id,
+        user_id,
+        fcm_token,
+        platform,
+        is_active,
+        created_at,
+        updated_at
+    """
+)
+
+LIST_ACTIVE_DEVICE_FCM_TOKENS_SQL = text(
+    """
+    SELECT
+        id,
+        user_id,
+        fcm_token,
+        platform,
+        is_active,
+        created_at,
+        updated_at
+    FROM device_fcm_tokens
+    WHERE user_id = :user_id
+      AND is_active = TRUE
+    ORDER BY updated_at DESC, id DESC
+    """
+)
+
 
 def check_database_connection() -> bool:
     with engine.connect() as connection:
@@ -1063,6 +1125,7 @@ def init_database() -> None:
         connection.execute(CREATE_VEHICLES_TABLE_SQL)
         connection.execute(CREATE_EMERGENCY_REPORTS_TABLE_SQL)
         connection.execute(CREATE_EMERGENCY_ASSIGNMENTS_TABLE_SQL)
+        connection.execute(CREATE_DEVICE_FCM_TOKENS_TABLE_SQL)
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS workshop_id BIGINT"))
         connection.execute(text("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS email VARCHAR(160)"))
         connection.execute(
@@ -1207,6 +1270,27 @@ def init_database() -> None:
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_path VARCHAR(255)"))
         connection.execute(text("ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS audio_url VARCHAR(255)"))
         connection.execute(CREATE_EMERGENCY_ASSIGNMENTS_TABLE_SQL)
+        connection.execute(CREATE_DEVICE_FCM_TOKENS_TABLE_SQL)
+        connection.execute(text("ALTER TABLE device_fcm_tokens ADD COLUMN IF NOT EXISTS user_id BIGINT"))
+        connection.execute(text("ALTER TABLE device_fcm_tokens ADD COLUMN IF NOT EXISTS fcm_token TEXT"))
+        connection.execute(text("ALTER TABLE device_fcm_tokens ADD COLUMN IF NOT EXISTS platform VARCHAR(40)"))
+        connection.execute(
+            text("ALTER TABLE device_fcm_tokens ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+        )
+        connection.execute(
+            text("ALTER TABLE device_fcm_tokens ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        )
+        connection.execute(
+            text("ALTER TABLE device_fcm_tokens ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        )
+        connection.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS device_fcm_tokens_fcm_token_key
+                ON device_fcm_tokens (fcm_token)
+                """
+            )
+        )
         connection.execute(
             text(
                 """
@@ -1573,3 +1657,17 @@ def delete_emergency_report(
         row = result.mappings().one_or_none()
 
     return dict(row) if row is not None else None
+
+
+def upsert_device_fcm_token(payload: Mapping[str, object]) -> dict[str, object]:
+    with engine.begin() as connection:
+        result = connection.execute(UPSERT_DEVICE_FCM_TOKEN_SQL, payload)
+        row = result.mappings().one()
+    return dict(row)
+
+
+def list_active_device_fcm_tokens(user_id: int) -> list[dict[str, object]]:
+    with engine.connect() as connection:
+        result = connection.execute(LIST_ACTIVE_DEVICE_FCM_TOKENS_SQL, {"user_id": user_id})
+        rows = result.mappings().all()
+    return [dict(row) for row in rows]

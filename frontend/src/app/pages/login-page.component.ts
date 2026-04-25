@@ -5,6 +5,8 @@ import { FormsModule, NgForm } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 
+import { API_BASE_URL } from '../api-base';
+import { clearStoredSession } from '../session';
 import { ValidationDialogComponent } from './validation-dialog.component';
 
 @Component({
@@ -98,7 +100,7 @@ export class LoginPageComponent {
   private readonly http = inject(HttpClient);
   private readonly dialog = inject(MatDialog);
   private readonly router = inject(Router);
-  private readonly loginApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/auth/login`;
+  private readonly loginApiUrl = `${API_BASE_URL}/auth/login`;
   private readonly appSessionStorageKey = 'acb_session';
 
   selectedRole: 'socio' | 'admin' = 'admin';
@@ -127,6 +129,7 @@ export class LoginPageComponent {
 
     this.isSubmitting = true;
     this.submitMessage = '';
+    clearStoredSession();
 
     this.http
       .post<LoginResponse>(this.loginApiUrl, {
@@ -135,6 +138,18 @@ export class LoginPageComponent {
       })
       .subscribe({
         next: async (response) => {
+          if (response.requires_password_change) {
+            this.isSubmitting = false;
+            this.submitMessage = '';
+            void this.router.navigate(['/forgot-password'], {
+              queryParams: {
+                email: response.email || this.form.email.trim().toLowerCase(),
+                source: 'workshop-initial-login',
+              },
+            });
+            return;
+          }
+
           const expectedRole = this.selectedRole === 'admin' ? 'admin' : 'workshop';
 
           if (response.role !== expectedRole) {
@@ -229,6 +244,7 @@ type LoginResponse = {
   phone: string;
   role: string;
   status: string;
+  requires_password_change: boolean;
   access_token: string | null;
   token_type: string | null;
 };

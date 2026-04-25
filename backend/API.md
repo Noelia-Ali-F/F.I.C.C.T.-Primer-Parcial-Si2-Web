@@ -57,6 +57,101 @@ Ejemplo:
 curl http://localhost:8000/api/health
 ```
 
+### `POST /api/devices/fcm-token`
+
+Registra o actualiza el token FCM de un dispositivo movil.
+
+#### Body JSON
+
+```json
+{
+  "user_id": 3,
+  "fcm_token": "token_del_dispositivo",
+  "platform": "android"
+}
+```
+
+Valores permitidos para `platform`:
+
+- `android`
+- `ios`
+- `web`
+
+#### Comportamiento
+
+- Crea el token si no existe.
+- Si el mismo token ya existe, actualiza `user_id`, `platform`, `updated_at` y lo marca como activo.
+- Permite mas de un dispositivo por usuario porque la unicidad esta en `fcm_token`.
+- Requiere que `user_id` exista en clientes.
+
+#### Respuesta exitosa
+
+Codigo: `201 Created`
+
+```json
+{
+  "id": 1,
+  "user_id": 3,
+  "fcm_token": "token_del_dispositivo",
+  "platform": "android",
+  "is_active": true,
+  "created_at": "2026-04-25T01:25:00.000000Z",
+  "updated_at": "2026-04-25T01:25:00.000000Z"
+}
+```
+
+#### Push enviados por backend
+
+El backend envia notificaciones FCM si `FCM_ENABLED=true` y `FIREBASE_CREDENTIALS_PATH` apunta al JSON de service account de Firebase.
+
+Eventos implementados:
+
+- `emergency_accepted`: cuando un taller acepta una emergencia.
+- `technician_assigned`: cuando un taller asigna o cambia el tecnico de una emergencia.
+
+Payload para emergencia aceptada:
+
+```json
+{
+  "notification": {
+    "title": "Emergencia aceptada",
+    "body": "DiegoRepair acepto tu emergencia: Bateria descargada"
+  },
+  "data": {
+    "type": "emergency_accepted",
+    "emergency_id": "45",
+    "workshop_id": "11",
+    "workshop_name": "DiegoRepair",
+    "incident_description": "Bateria descargada"
+  }
+}
+```
+
+Payload para tecnico asignado:
+
+```json
+{
+  "notification": {
+    "title": "Tecnico asignado",
+    "body": "Lucia Cuellar de DiegoRepair atendera: Bateria descargada"
+  },
+  "data": {
+    "type": "technician_assigned",
+    "emergency_id": "45",
+    "workshop_id": "11",
+    "technician_id": "40",
+    "workshop_name": "DiegoRepair",
+    "technician_name": "Lucia Cuellar",
+    "incident_description": "Bateria descargada",
+    "technician_latitude": "-17.7700",
+    "technician_longitude": "-63.1700"
+  }
+}
+
+```
+
+Nota: mientras no exista tracking real del tecnico, `technician_latitude` y `technician_longitude` usan la ubicacion registrada del taller.
+
 ### `POST /api/clientes`
 
 Registra un cliente desde la app movil despues de la validacion OTP.

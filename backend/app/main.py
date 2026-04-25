@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from datetime import datetime
 import base64
 import hashlib
@@ -30,6 +31,14 @@ try:
 except ImportError:
     whisper = None
 
+try:
+    import firebase_admin
+    from firebase_admin import credentials, messaging
+except ImportError:
+    firebase_admin = None
+    credentials = None
+    messaging = None
+
 from app.config import settings
 from app.db import (
     assign_emergency_technician,
@@ -52,6 +61,7 @@ from app.db import (
     get_workshop_by_id,
     get_workshop_by_email,
     init_database,
+    list_active_device_fcm_tokens,
     list_emergency_reports,
     list_clients,
     list_technicians,
@@ -68,6 +78,7 @@ from app.db import (
     update_workshop_approval_status_with_password,
     update_workshop_password,
     update_workshop_registration,
+    upsert_device_fcm_token,
 )
 
 
@@ -85,6 +96,7 @@ PROTECTED_ADMIN_EMAIL = settings.protected_admin_email.lower().strip()
 PROTECTED_ADMIN_ROLE = "admin"
 PROTECTED_ADMIN_ID = 0
 WORKSHOP_ROLE = "workshop"
+_firebase_app_initialized = False
 
 # Limites y formatos aceptados para el flujo de emergencias.
 MAX_EMERGENCY_PHOTOS = 6
@@ -235,17 +247,17 @@ class AccountTypeLookupRequest(BaseModel):
 
 
 class AccountTypeLookupResponse(BaseModel):
-    exists: bool
     role: str | None = None
 
 
 class LoginResponse(BaseModel):
     id: int
     email: EmailStr
-    full_name: str
-    phone: str
+    full_name: str | None = None
+    phone: str | None = None
     role: str
     status: str
+    requires_password_change: bool = False
     access_token: str | None = None
     token_type: str | None = None
 
@@ -455,6 +467,24 @@ class EmergencyStatusUpdate(BaseModel):
 
 class EmergencyTechnicianAssignmentRequest(BaseModel):
     technician_id: int = Field(ge=1)
+
+
+class DeviceFcmTokenCreate(BaseModel):
+    user_id: int = Field(ge=1)
+    fcm_token: str = Field(min_length=20, max_length=4096)
+    platform: str = Field(default="android", pattern="^(android|ios|web)$")
+
+
+class DeviceFcmTokenResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    fcm_token: str
+    platform: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 def hash_password(password: str) -> str:
@@ -727,6 +757,10 @@ def is_protected_admin_role(role: str) -> bool:
     return role.lower().strip() == PROTECTED_ADMIN_ROLE
 
 
+def workshop_login_status(approval_status: object) -> str:
+    return "active" if str(approval_status) == "activo" else "pending"
+
+
 def ensure_client_exists(client_id: int) -> None:
     try:
         client = get_client_by_id(client_id)
@@ -738,6 +772,113 @@ def ensure_client_exists(client_id: int) -> None:
 
     if not client:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
+
+
+def ensure_firebase_app() -> bool:
+    global _firebase_app_initialized
+
+    if _firebase_app_initialized:
+        return True
+
+    if not settings.fcm_enabled:
+        return False
+
+    if firebase_admin is None or credentials is None:
+        logger.warning("FCM habilitado, pero firebase-admin no esta instalado")
+        return False
+
+    credentials_path = normalize_optional_text(settings.firebase_credentials_path)
+    if not credentials_path:
+        logger.warning("FCM habilitado, pero FIREBASE_CREDENTIALS_PATH no esta configurado")
+        return False
+
+    try:
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(credentials.Certificate(credentials_path))
+        _firebase_app_initialized = True
+        return True
+    except Exception:
+        logger.exception("No se pudo inicializar Firebase Admin SDK")
+        return False
+
+
+def send_push_to_client(client_id: int | None, title: str, body: str, data: dict[str, str]) -> None:
+    if client_id is None:
+        return
+
+    try:
+        devices = list_active_device_fcm_tokens(client_id)
+    except OperationalError:
+        logger.exception("No se pudieron consultar tokens FCM del cliente %s", client_id)
+        return
+
+    if not devices or not ensure_firebase_app() or messaging is None:
+        return
+
+    for device in devices:
+        token = str(device.get("fcm_token", "")).strip()
+        if not token:
+            continue
+
+        try:
+            message = messaging.Message(
+                notification=messaging.Notification(title=title, body=body),
+                data=data,
+                token=token,
+            )
+            messaging.send(message)
+        except Exception:
+            logger.exception("No se pudo enviar push FCM al cliente %s", client_id)
+
+
+def compact_push_text(value: object, *, fallback: str, max_length: int = 120) -> str:
+    text_value = normalize_optional_text(str(value)) if value is not None else None
+    if not text_value:
+        return fallback
+
+    single_line = re.sub(r"\s+", " ", text_value)
+    if len(single_line) <= max_length:
+        return single_line
+
+    return f"{single_line[: max_length - 3].rstrip()}..."
+
+
+def emergency_incident_label(report: Mapping[str, object]) -> str:
+    return compact_push_text(
+        report.get("description")
+        or report.get("problem_type_standardized")
+        or report.get("problem_type")
+        or report.get("vehicle_name"),
+        fallback="Incidente reportado",
+    )
+
+
+def push_coordinate(value: object) -> str | None:
+    if value is None:
+        return None
+
+    try:
+        return str(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def add_coordinate_pair(
+    data: dict[str, str],
+    *,
+    latitude_key: str,
+    longitude_key: str,
+    latitude: object,
+    longitude: object,
+) -> None:
+    normalized_latitude = push_coordinate(latitude)
+    normalized_longitude = push_coordinate(longitude)
+
+    if normalized_latitude is None or normalized_longitude is None:
+        return
+
+    data[latitude_key] = normalized_latitude
+    data[longitude_key] = normalized_longitude
 
 
 def build_public_upload_url(relative_path: str) -> str:
@@ -980,6 +1121,31 @@ def healthcheck() -> dict[str, object]:
 
 
 @app.post(
+    f"{settings.api_prefix}/devices/fcm-token",
+    response_model=DeviceFcmTokenResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_device_fcm_token(payload: DeviceFcmTokenCreate) -> DeviceFcmTokenResponse:
+    ensure_client_exists(payload.user_id)
+
+    try:
+        device = upsert_device_fcm_token(
+            {
+                "user_id": payload.user_id,
+                "fcm_token": payload.fcm_token.strip(),
+                "platform": payload.platform,
+            }
+        )
+    except OperationalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible",
+        ) from exc
+
+    return DeviceFcmTokenResponse.model_validate(device)
+
+
+@app.post(
     f"{settings.api_prefix}/workshops",
     response_model=WorkshopRegistrationResponse,
     status_code=status.HTTP_201_CREATED,
@@ -1212,6 +1378,27 @@ def edit_emergency_status(
         )
 
     normalize_emergency_media_fields(updated)
+
+    if payload.emergency_status == "activo":
+        workshop_name = compact_push_text(
+            updated.get("nearest_workshop_name"),
+            fallback="El taller",
+            max_length=80,
+        )
+        incident_label = emergency_incident_label(updated)
+        send_push_to_client(
+            int(updated["client_id"]) if updated.get("client_id") is not None else None,
+            "Emergencia aceptada",
+            f"{workshop_name} acepto tu emergencia: {incident_label}",
+            {
+                "type": "emergency_accepted",
+                "emergency_id": str(report_id),
+                "workshop_id": str(workshop_id or updated.get("nearest_workshop_id") or ""),
+                "workshop_name": workshop_name,
+                "incident_description": incident_label,
+            },
+        )
+
     return EmergencyReportResponse.model_validate(updated)
 
 
@@ -1276,6 +1463,44 @@ def assign_technician_to_emergency(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Emergencia no encontrada")
 
     normalize_emergency_media_fields(updated_report)
+    workshop_name = compact_push_text(
+        updated_report.get("nearest_workshop_name"),
+        fallback="El taller",
+        max_length=80,
+    )
+    technician_name = compact_push_text(
+        updated_report.get("assigned_technician_name") or technician.get("full_name"),
+        fallback="Tecnico asignado",
+        max_length=80,
+    )
+    incident_label = emergency_incident_label(updated_report)
+    try:
+        workshop = get_workshop_by_id(workshop_id)
+    except OperationalError:
+        logger.exception("No se pudo consultar coordenadas del taller %s para push", workshop_id)
+        workshop = None
+    push_data = {
+        "type": "technician_assigned",
+        "emergency_id": str(report_id),
+        "workshop_id": str(workshop_id),
+        "technician_id": str(payload.technician_id),
+        "workshop_name": workshop_name,
+        "technician_name": technician_name,
+        "incident_description": incident_label,
+    }
+    add_coordinate_pair(
+        push_data,
+        latitude_key="technician_latitude",
+        longitude_key="technician_longitude",
+        latitude=workshop.get("latitude") if workshop else None,
+        longitude=workshop.get("longitude") if workshop else None,
+    )
+    send_push_to_client(
+        int(updated_report["client_id"]) if updated_report.get("client_id") is not None else None,
+        "Tecnico asignado",
+        f"{technician_name} de {workshop_name} atendera: {incident_label}",
+        push_data,
+    )
     return EmergencyReportListResponse.model_validate(updated_report)
 
 
@@ -1430,20 +1655,25 @@ def change_workshop_password(payload: WorkshopPasswordChangeRequest) -> dict[str
     if not workshop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
 
-    if workshop["approval_status"] != "activo":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="El taller todavía no fue habilitado por el administrador",
-        )
-
     password_hash = workshop.get("password_hash")
-    if not isinstance(password_hash, str) or not verify_password(settings.workshop_initial_password, password_hash):
+    uses_initial_password = (
+        isinstance(password_hash, str) and verify_password(settings.workshop_initial_password, password_hash)
+    )
+    accepts_missing_initial_password = not isinstance(password_hash, str) and (
+        workshop["approval_status"] != "activo"
+    )
+
+    if not uses_initial_password and not accepts_missing_initial_password:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Este taller ya no usa la contraseña temporal inicial",
         )
 
-    updated = update_workshop_password(int(workshop["id"]), hash_password(payload.new_password))
+    updated = update_workshop_approval_status_with_password(
+        int(workshop["id"]),
+        "activo",
+        hash_password(payload.new_password),
+    )
 
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taller no encontrado")
@@ -1712,6 +1942,7 @@ def remove_client(client_id: int) -> None:
 @app.post(
     f"{settings.api_prefix}/auth/login",
     response_model=LoginResponse,
+    response_model_exclude_none=True,
 )
 def login(payload: LoginRequest) -> LoginResponse:
     normalized_email = payload.email.lower().strip()
@@ -1730,34 +1961,45 @@ def login(payload: LoginRequest) -> LoginResponse:
             phone=settings.protected_admin_phone,
             role=PROTECTED_ADMIN_ROLE,
             status="active",
+            requires_password_change=False,
             access_token=secrets.token_urlsafe(32),
-            token_type="bearer",
+            token_type="Bearer",
         )
 
     workshop = get_workshop_by_email(normalized_email)
 
     if workshop:
-        if workshop["approval_status"] != "activo":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="El taller todavía no fue habilitado por el administrador",
-            )
-
         password_hash = workshop.get("password_hash")
-        if not isinstance(password_hash, str) or not verify_password(payload.password, password_hash):
+        uses_initial_password = (
+            isinstance(password_hash, str) and verify_password(settings.workshop_initial_password, password_hash)
+        )
+        accepts_missing_initial_password = (
+            not isinstance(password_hash, str)
+            and workshop["approval_status"] != "activo"
+            and payload.password == settings.workshop_initial_password
+        )
+
+        if not accepts_missing_initial_password and (
+            not isinstance(password_hash, str) or not verify_password(payload.password, password_hash)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Correo o contraseña incorrectos",
             )
 
-        if verify_password(settings.workshop_initial_password, password_hash):
+        if uses_initial_password or accepts_missing_initial_password:
+            return LoginResponse(
+                id=int(workshop["id"]),
+                email=str(workshop["email"]),
+                role=WORKSHOP_ROLE,
+                status=workshop_login_status(workshop["approval_status"]),
+                requires_password_change=True,
+            )
+
+        if workshop["approval_status"] != "activo":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "WORKSHOP_PASSWORD_CHANGE_REQUIRED",
-                    "message": "Debes cambiar la contraseña temporal antes de acceder al dashboard",
-                    "email": normalized_email,
-                },
+                detail="El taller todavía no fue habilitado por el administrador",
             )
 
         return LoginResponse(
@@ -1766,9 +2008,10 @@ def login(payload: LoginRequest) -> LoginResponse:
             full_name=str(workshop["workshop_name"]),
             phone=str(workshop["phone"]),
             role=WORKSHOP_ROLE,
-            status=str(workshop["approval_status"]),
+            status=workshop_login_status(workshop["approval_status"]),
+            requires_password_change=False,
             access_token=secrets.token_urlsafe(32),
-            token_type="bearer",
+            token_type="Bearer",
         )
 
     client = get_client_by_email(normalized_email)
@@ -1792,8 +2035,9 @@ def login(payload: LoginRequest) -> LoginResponse:
         phone=str(client["phone"]),
         role=str(client["role"]),
         status=str(client["status"]),
+        requires_password_change=False,
         access_token=secrets.token_urlsafe(32),
-        token_type="bearer",
+        token_type="Bearer",
     )
 
 
@@ -1806,13 +2050,13 @@ def lookup_account_type(payload: AccountTypeLookupRequest) -> AccountTypeLookupR
 
     workshop = get_workshop_by_email(normalized_email)
     if workshop:
-        return AccountTypeLookupResponse(exists=True, role=WORKSHOP_ROLE)
+        return AccountTypeLookupResponse(role=WORKSHOP_ROLE)
 
     client = get_client_by_email(normalized_email)
     if client:
-        return AccountTypeLookupResponse(exists=True, role=str(client["role"]))
+        return AccountTypeLookupResponse(role=str(client["role"]))
 
-    return AccountTypeLookupResponse(exists=False, role=None)
+    return AccountTypeLookupResponse(role=None)
 
 
 @app.api_route(f"{settings.api_prefix}/auth/forgot-password", methods=["POST", "PUT"])

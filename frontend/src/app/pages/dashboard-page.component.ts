@@ -4,6 +4,8 @@ import { Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/co
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { API_BASE_URL, BACKEND_BASE_URL } from '../api-base';
+import { APP_SESSION_STORAGE_KEY, AppSession, clearStoredSession, parseStoredSession } from '../session';
 
 declare const L: any;
 
@@ -190,17 +192,6 @@ type WorkshopFormModel = {
   latitude: number | null;
   longitude: number | null;
   password: string;
-};
-
-type AdminSession = {
-  id: number;
-  email: string;
-  fullName: string;
-  phone: string;
-  role: string;
-  status: string;
-  accessToken: string | null;
-  tokenType: string | null;
 };
 
 @Component({
@@ -1375,13 +1366,26 @@ type AdminSession = {
 
             <div class="emergency-detail-block emergency-assignment-block" *ngIf="isWorkshopSession">
               <strong>Asignación de técnico</strong>
-              <p *ngIf="selectedMaintenanceRequest.assignedTechnicianName; else noAssignedTechnician">
-                Técnico asignado:
-                <strong>{{ selectedMaintenanceRequest.assignedTechnicianName }}</strong>
-                <span *ngIf="selectedMaintenanceRequest.assignedTechnicianPhone">
-                  · {{ selectedMaintenanceRequest.assignedTechnicianPhone }}
-                </span>
-              </p>
+              <div
+                class="emergency-assigned-technician"
+                *ngIf="selectedMaintenanceRequest.assignedTechnicianName; else noAssignedTechnician"
+              >
+                <p>
+                  Técnico asignado:
+                  <strong>{{ selectedMaintenanceRequest.assignedTechnicianName }}</strong>
+                  <span *ngIf="selectedMaintenanceRequest.assignedTechnicianPhone">
+                    · {{ selectedMaintenanceRequest.assignedTechnicianPhone }}
+                  </span>
+                </p>
+                <button
+                  class="technician-inline-button"
+                  type="button"
+                  *ngIf="selectedMaintenanceRequest.status === 'activo' && !isEditingEmergencyAssignment"
+                  (click)="startEmergencyAssignmentEdit()"
+                >
+                  Editar
+                </button>
+              </div>
               <ng-template #noAssignedTechnician>
                 <p>
                   {{
@@ -1392,7 +1396,13 @@ type AdminSession = {
                 </p>
               </ng-template>
 
-              <div class="emergency-assignment-controls" *ngIf="selectedMaintenanceRequest.status === 'activo'">
+              <div
+                class="emergency-assignment-controls"
+                *ngIf="
+                  selectedMaintenanceRequest.status === 'activo' &&
+                  (!selectedMaintenanceRequest.assignedTechnicianId || isEditingEmergencyAssignment)
+                "
+              >
                 <label class="technician-field">
                   <span>Técnico disponible</span>
                   <select [(ngModel)]="selectedEmergencyTechnicianId" name="selectedEmergencyTechnicianId">
@@ -1410,6 +1420,15 @@ type AdminSession = {
                 >
                   {{ isAssigningEmergencyTechnician ? 'Asignando...' : 'Asignar técnico' }}
                 </button>
+                <button
+                  class="dashboard-secondary-button"
+                  type="button"
+                  *ngIf="selectedMaintenanceRequest.assignedTechnicianId"
+                  (click)="cancelEmergencyAssignmentEdit()"
+                  [disabled]="isAssigningEmergencyTechnician"
+                >
+                  Cancelar
+                </button>
               </div>
 
               <p class="technician-form-feedback" *ngIf="emergencyAssignmentFeedback">
@@ -1423,6 +1442,7 @@ type AdminSession = {
               <button
                 class="dashboard-refresh-button"
                 type="button"
+                *ngIf="selectedMaintenanceRequest.status === 'pendiente'"
                 (click)="updateSelectedEmergencyStatus('activo')"
                 [disabled]="isUpdatingEmergencyStatus"
               >
@@ -1478,12 +1498,12 @@ export class DashboardPageComponent implements OnDestroy {
   private readonly http = inject(HttpClient);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly router = inject(Router);
-  private readonly workshopsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops`;
-  private readonly techniciansApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/technicians`;
-  private readonly clientsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/clientes`;
-  private readonly emergenciesApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/emergencias`;
-  private readonly backendBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
-  private readonly appSessionStorageKey = 'acb_session';
+  private readonly workshopsApiUrl = `${API_BASE_URL}/workshops`;
+  private readonly techniciansApiUrl = `${API_BASE_URL}/technicians`;
+  private readonly clientsApiUrl = `${API_BASE_URL}/clientes`;
+  private readonly emergenciesApiUrl = `${API_BASE_URL}/emergencias`;
+  private readonly backendBaseUrl = BACKEND_BASE_URL;
+  private readonly appSessionStorageKey = APP_SESSION_STORAGE_KEY;
 
   readonly requests: DashboardItem[] = [
     {
@@ -1512,6 +1532,7 @@ export class DashboardPageComponent implements OnDestroy {
   maintenanceFilter: 'todas' | 'pendiente' | 'activo' | 'rechazado' = 'todas';
   selectedMaintenanceRequestId: number | null = null;
   selectedEmergencyTechnicianId: number | null = null;
+  isEditingEmergencyAssignment = false;
 
   selectedSection: DashboardSection = 'dashboard';
   isSidebarCollapsed = false;
@@ -1542,7 +1563,7 @@ export class DashboardPageComponent implements OnDestroy {
   showClientDeleteModal = false;
   workshopsPage = 1;
   readonly workshopsPageSize = 15;
-  private readonly adminSession: AdminSession | null = this.readAdminSession();
+  private readonly adminSession: AppSession | null = this.readAdminSession();
   clientPendingDelete: Client | null = null;
   showEmergencyModal = false;
   private emergencyMap?: any;
@@ -1719,6 +1740,7 @@ export class DashboardPageComponent implements OnDestroy {
   selectMaintenanceRequest(request: MaintenanceRequest): void {
     this.selectedMaintenanceRequestId = request.id;
     this.selectedEmergencyTechnicianId = request.assignedTechnicianId;
+    this.isEditingEmergencyAssignment = false;
     this.emergencyAssignmentFeedback = '';
     this.showEmergencyModal = true;
     this.renderSelectedEmergencyMap();
@@ -1736,6 +1758,19 @@ export class DashboardPageComponent implements OnDestroy {
   closeEmergencyModal(): void {
     this.showEmergencyModal = false;
     this.selectedEmergencyTechnicianId = null;
+    this.isEditingEmergencyAssignment = false;
+    this.emergencyAssignmentFeedback = '';
+  }
+
+  startEmergencyAssignmentEdit(): void {
+    this.selectedEmergencyTechnicianId = this.selectedMaintenanceRequest?.assignedTechnicianId ?? null;
+    this.isEditingEmergencyAssignment = true;
+    this.emergencyAssignmentFeedback = '';
+  }
+
+  cancelEmergencyAssignmentEdit(): void {
+    this.selectedEmergencyTechnicianId = this.selectedMaintenanceRequest?.assignedTechnicianId ?? null;
+    this.isEditingEmergencyAssignment = false;
     this.emergencyAssignmentFeedback = '';
   }
 
@@ -1772,6 +1807,7 @@ export class DashboardPageComponent implements OnDestroy {
 
           if (nextStatus === 'activo') {
             this.maintenanceFilter = 'activo';
+            this.closeEmergencyModal();
           }
 
           if (nextStatus === 'rechazado') {
@@ -1820,6 +1856,7 @@ export class DashboardPageComponent implements OnDestroy {
           );
           this.selectedMaintenanceRequestId = updatedRequest.id;
           this.selectedEmergencyTechnicianId = updatedRequest.assignedTechnicianId;
+          this.isEditingEmergencyAssignment = false;
           this.isAssigningEmergencyTechnician = false;
           this.emergencyAssignmentFeedback = 'Tecnico asignado correctamente.';
           this.loadTechnicians();
@@ -3006,7 +3043,7 @@ export class DashboardPageComponent implements OnDestroy {
     });
   }
 
-  private readAdminSession(): AdminSession | null {
+  private readAdminSession(): AppSession | null {
     if (typeof window === 'undefined') {
       return null;
     }
@@ -3019,11 +3056,14 @@ export class DashboardPageComponent implements OnDestroy {
       return null;
     }
 
-    try {
-      return JSON.parse(raw) as AdminSession;
-    } catch {
+    const session = parseStoredSession(raw);
+
+    if (!session) {
+      clearStoredSession();
       return null;
     }
+
+    return session;
   }
 
   private refreshStats(): void {

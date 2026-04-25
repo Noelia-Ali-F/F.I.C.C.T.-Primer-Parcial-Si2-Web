@@ -21,18 +21,18 @@ Este proyecto se ejecuta usando Docker Compose.
 
 1. Copiar `.env.example` a `.env`
 2. Copiar `backend/.env.example` a `backend/.env`
-3. Ejecutar `docker-compose up --build`
+3. Ejecutar `docker compose up --build`
 
 ## Puertos
 
-- Frontend: `http://localhost:4200`
-- Backend: `http://localhost:8000`
-- API healthcheck: `http://localhost:8000/api/health`
-- PostgreSQL: `localhost:5432`
+- Frontend: `http://localhost:5656`
+- Backend: `http://localhost:8787`
+- API healthcheck: `http://localhost:8787/api/health`
+- PostgreSQL: `localhost:5454`
 
 ## Administrador Del Sistema
 
-- Login web: `http://localhost:4200/login`
+- Login web: `http://localhost:5656/login`
 - Correo: `administrador@acb.com`
 - Contrasena: `123ppp+++`
 

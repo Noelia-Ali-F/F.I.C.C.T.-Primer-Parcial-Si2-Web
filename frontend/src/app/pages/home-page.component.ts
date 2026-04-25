@@ -4,6 +4,7 @@ import { AfterViewInit, Component, ElementRef, ViewChild, inject } from '@angula
 import { FormsModule, NgForm, NgModel } from '@angular/forms';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { RouterLink } from '@angular/router';
+import { API_BASE_URL } from '../api-base';
 import { AlertSuccessComponent } from './alert-success.component';
 import { ValidationDialogComponent } from './validation-dialog.component';
 
@@ -258,7 +259,7 @@ type HeroBenefit = {
 export class HomePageComponent implements AfterViewInit {
   private readonly http = inject(HttpClient);
   private readonly dialog = inject(MatDialog);
-  private readonly apiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops`;
+  private readonly apiUrl = `${API_BASE_URL}/workshops`;
   private successMessageTimeout?: ReturnType<typeof setTimeout>;
   readonly isSecureContext = window.isSecureContext;
 

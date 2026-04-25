@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { AfterViewInit, Component, ElementRef, ViewChild, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { API_BASE_URL } from '../api-base';
 
 declare const L: any;
 
@@ -116,7 +117,7 @@ type WorkshopMapItem = {
 })
 export class MapPageComponent implements AfterViewInit {
   private readonly http = inject(HttpClient);
-  private readonly workshopsApiUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/workshops`;
+  private readonly workshopsApiUrl = `${API_BASE_URL}/workshops`;
 
   @ViewChild('mapCanvas', { static: true })
   private readonly mapCanvasRef?: ElementRef<HTMLDivElement>;

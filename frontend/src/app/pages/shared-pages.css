@@ -2328,9 +2328,21 @@
     linear-gradient(180deg, rgba(246, 249, 255, 0.98), rgba(255, 255, 255, 0.96));
 }
 
+.emergency-assigned-technician {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.emergency-assigned-technician p {
+  margin: 0;
+  line-height: 1.6;
+}
+
 .emergency-assignment-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0.85rem;
   align-items: end;
 }

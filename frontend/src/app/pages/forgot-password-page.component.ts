@@ -5,6 +5,7 @@ import { FormsModule, NgForm } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 
+import { API_BASE_URL } from '../api-base';
 import { ValidationDialogComponent } from './validation-dialog.component';
 
 @Component({
@@ -110,12 +111,9 @@ export class ForgotPasswordPageComponent {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  private readonly workshopsChangePasswordApiUrl =
-    `${window.location.protocol}//${window.location.hostname}:8000/api/workshops/change-password`;
-  private readonly workshopsForgotPasswordApiUrl =
-    `${window.location.protocol}//${window.location.hostname}:8000/api/workshops/forgot-password`;
-  private readonly clientsForgotPasswordApiUrl =
-    `${window.location.protocol}//${window.location.hostname}:8000/api/clientes/forgot-password`;
+  private readonly workshopsChangePasswordApiUrl = `${API_BASE_URL}/workshops/change-password`;
+  private readonly workshopsForgotPasswordApiUrl = `${API_BASE_URL}/workshops/forgot-password`;
+  private readonly clientsForgotPasswordApiUrl = `${API_BASE_URL}/clientes/forgot-password`;
 
   email = '';
   newPassword = '';

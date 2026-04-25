@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     whisper_language: str | None = "es"
     photo_classification_enabled: bool = False
     photo_classification_model: str = "gpt-5-mini"
+    fcm_enabled: bool = False
+    firebase_credentials_path: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
