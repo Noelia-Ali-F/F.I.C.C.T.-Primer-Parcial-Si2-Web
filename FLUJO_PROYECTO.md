@@ -44,7 +44,7 @@ El socio de taller nace desde el registro de talleres. El administrador puede ap
 
 En el dashboard, el socio solo puede ver:
 
-- Clientes
+- Tecnicos
 - Emergencias
 - Reportes
 
@@ -253,7 +253,7 @@ Secciones principales:
 Restricciones por rol:
 
 - Administrador: puede ver todas las secciones.
-- Socio de taller: solo ve Clientes, Emergencias y Reportes.
+- Socio de taller: solo ve Tecnicos, Emergencias y Reportes.
 
 ## 12. Emergencias En Dashboard
 

@@ -1917,7 +1917,7 @@ export class DashboardPageComponent implements OnDestroy {
       return true;
     }
 
-    return section === 'clients' || section === 'emergencies' || section === 'reports';
+    return section === 'technicians' || section === 'emergencies' || section === 'reports';
   }
 
   get maintenanceRequestsFiltered(): MaintenanceRequest[] {
