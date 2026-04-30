@@ -431,8 +431,21 @@ type WorkshopFormModel = {
               <span class="dashboard-user-name">{{ userDisplayName }}</span>
             </div>
 
-            <button class="dashboard-topbar-icon" type="button" aria-label="Notificaciones">
+            <button
+              class="dashboard-topbar-icon dashboard-notification-button"
+              type="button"
+              [class.has-alerts]="pendingEmergencyNotifications > 0"
+              [attr.aria-label]="
+                pendingEmergencyNotifications > 0
+                  ? pendingEmergencyNotifications + ' emergencias pendientes'
+                  : 'Notificaciones'
+              "
+              (click)="openEmergencyNotifications()"
+            >
               🔔
+              <span class="dashboard-notification-badge" *ngIf="pendingEmergencyNotifications > 0">
+                {{ pendingEmergencyNotifications > 99 ? '99+' : pendingEmergencyNotifications }}
+              </span>
             </button>
 
             <button
@@ -1707,6 +1720,8 @@ export class DashboardPageComponent implements OnDestroy {
   private readonly emergenciesApiUrl = `${API_BASE_URL}/emergencias`;
   private readonly backendBaseUrl = BACKEND_BASE_URL;
   private readonly appSessionStorageKey = APP_SESSION_STORAGE_KEY;
+  private readonly emergencyRefreshMs = 15000;
+  private emergencyRefreshTimer: number | undefined;
 
   readonly requests: DashboardItem[] = [
     {
@@ -1730,6 +1745,7 @@ export class DashboardPageComponent implements OnDestroy {
   ];
 
   maintenanceRequests: MaintenanceRequest[] = [];
+  lastSeenPendingEmergencyId = 0;
 
   maintenanceSearch = '';
   maintenanceFilter: MaintenanceFilter = 'todas';
@@ -1856,9 +1872,14 @@ export class DashboardPageComponent implements OnDestroy {
     this.loadTechnicians();
     this.loadClients();
     this.loadEmergencies();
+    this.startEmergencyRefresh();
   }
 
   ngOnDestroy(): void {
+    if (typeof window !== 'undefined' && this.emergencyRefreshTimer !== undefined) {
+      window.clearInterval(this.emergencyRefreshTimer);
+    }
+
     if (typeof window !== 'undefined' && this.emergencyMapResizeTimer !== undefined) {
       window.clearTimeout(this.emergencyMapResizeTimer);
     }
@@ -1958,6 +1979,12 @@ export class DashboardPageComponent implements OnDestroy {
       { label: 'Pendientes', value: this.maintenanceRequests.filter((request) => request.status === 'pendiente').length },
       { label: 'Activas', value: this.maintenanceRequests.filter((request) => request.status === 'activo').length },
     ];
+  }
+
+  get pendingEmergencyNotifications(): number {
+    return this.maintenanceRequests.filter(
+      (request) => request.status === 'pendiente' && request.id > this.lastSeenPendingEmergencyId,
+    ).length;
   }
 
   get reportWorkRequests(): MaintenanceRequest[] {
@@ -2278,8 +2305,12 @@ export class DashboardPageComponent implements OnDestroy {
 
     this.http.get<EmergencyReport[]>(this.emergenciesApiUrl, { params }).subscribe({
       next: (reports) => {
+        const previousSelectedId = this.selectedMaintenanceRequestId;
         this.maintenanceRequests = reports.map((report) => this.mapEmergencyReportToRequest(report));
-        this.selectedMaintenanceRequestId = this.maintenanceRequests[0]?.id ?? null;
+        const previousSelectionStillExists = this.maintenanceRequests.some((request) => request.id === previousSelectedId);
+        this.selectedMaintenanceRequestId = previousSelectionStillExists
+          ? previousSelectedId
+          : this.maintenanceRequests[0]?.id ?? null;
         this.isEmergenciesLoading = false;
         this.renderSelectedEmergencyMap();
       },
@@ -2290,6 +2321,32 @@ export class DashboardPageComponent implements OnDestroy {
         this.renderSelectedEmergencyMap();
       },
     });
+  }
+
+  openEmergencyNotifications(): void {
+    this.markPendingEmergenciesAsSeen();
+    this.maintenanceFilter = 'pendiente';
+    this.maintenanceSearch = '';
+    this.selectSection('emergencies');
+    this.loadEmergencies();
+  }
+
+  private markPendingEmergenciesAsSeen(): void {
+    const latestPendingEmergencyId = this.maintenanceRequests
+      .filter((request) => request.status === 'pendiente')
+      .reduce((latestId, request) => Math.max(latestId, request.id), this.lastSeenPendingEmergencyId);
+
+    this.lastSeenPendingEmergencyId = latestPendingEmergencyId;
+  }
+
+  private startEmergencyRefresh(): void {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    this.emergencyRefreshTimer = window.setInterval(() => {
+      this.loadEmergencies();
+    }, this.emergencyRefreshMs);
   }
 
   private mapEmergencyReportToRequest(report: EmergencyReport): MaintenanceRequest {

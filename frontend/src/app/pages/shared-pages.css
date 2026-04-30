@@ -1461,6 +1461,7 @@
 }
 
 .dashboard-topbar-icon {
+  position: relative;
   display: inline-grid;
   place-items: center;
   width: 3rem;
@@ -1473,6 +1474,32 @@
   font-size: 1.1rem;
   box-shadow: 0 12px 26px rgba(25, 35, 61, 0.07);
   cursor: pointer;
+}
+
+.dashboard-notification-button.has-alerts {
+  color: #9f3024;
+  box-shadow:
+    0 12px 26px rgba(25, 35, 61, 0.07),
+    0 0 0 3px rgba(247, 190, 67, 0.28);
+}
+
+.dashboard-notification-badge {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.32rem;
+  border-radius: 999px;
+  background: #e03b2f;
+  color: #fffdf8;
+  border: 2px solid #fffdf8;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 8px 16px rgba(112, 26, 18, 0.26);
 }
 
 .dashboard-topbar-logout {
